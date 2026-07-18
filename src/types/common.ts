@@ -1,0 +1,1 @@
+export type YearLevel = "Freshman" | "Sophomore" | "Junior" | "Senior";
