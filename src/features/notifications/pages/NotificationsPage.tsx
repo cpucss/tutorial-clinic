@@ -1,72 +1,70 @@
-import { useState } from "react";
-import { Bell, CalendarCheck, FileCheck2, Trophy } from "lucide-react";
-import { EmptyState, StatusBadge } from "../../../components/common/Feedback";
+import { useMemo, useState } from "react";
+import { Bell, CalendarCheck, CheckCheck, FileCheck2, Megaphone, Settings, Trash2, Trophy, UserRound } from "lucide-react";
 
-const items = [
-  { id: "n1", icon: <CalendarCheck size={16} color="#1C1C1C" strokeWidth={1.75} />, title: "Reminder: Conquering Recursion", body: "Starts tomorrow at 3:00 PM in Room CS-204.", time: "2h ago", read: false },
-  { id: "n2", icon: <FileCheck2 size={16} color="#1C1C1C" strokeWidth={1.75} />, title: "Your note was approved", body: "ER diagram practice set has been approved. +60 pts credited.", time: "1d ago", read: false },
-  { id: "n3", icon: <Trophy size={16} color="#1C1C1C" strokeWidth={1.75} />, title: "You moved up the leaderboard", body: "You are now rank #5 in the Junior bracket.", time: "2d ago", read: true },
-];
+import { ConfirmDialog, EmptyState, StatusBadge } from "../../../components/common/Feedback";
+import type { TabKey } from "../../../components/layout/Sidebar";
+import { useAppData } from "../../../context/AppDataContext";
+import type { DemoNotification, NotificationType } from "../../../types/app";
+import { relativeTime } from "../../../utils/format";
 
-export function NotificationsPage() {
-  const [notifications, setNotifications] = useState(items);
-  const unreadCount = notifications.filter((item) => !item.read).length;
+type Filter = "All" | "Unread" | "Events" | "Attendance" | "Notes" | "System";
+const filters: Filter[] = ["All", "Unread", "Events", "Attendance", "Notes", "System"];
 
-  function markAllRead() {
-    setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+export function NotificationsPage({ onNavigate }: { onNavigate?: (tab: TabKey) => void }) {
+  const { state, currentUser, markNotification, markAllNotifications, deleteNotification, clearNotifications } = useAppData();
+  const [filter, setFilter] = useState<Filter>("All");
+  const [confirmClear, setConfirmClear] = useState(false);
+  const mine = useMemo(() => state.notifications.filter((item) => item.userId === currentUser?.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)), [currentUser?.id, state.notifications]);
+  const unread = mine.filter((item) => !item.readAt).length;
+  const visible = mine.filter((item) => {
+    if (filter === "All") return true;
+    if (filter === "Unread") return !item.readAt;
+    if (filter === "Events") return item.type === "Event" || item.type === "Announcement";
+    if (filter === "System") return ["System", "Account", "Points"].includes(item.type);
+    return item.type === filter;
+  });
+
+  function openRelated(item: DemoNotification) {
+    markNotification(item.id, true);
+    if (item.relatedTab) onNavigate?.(item.relatedTab as TabKey);
   }
 
   return (
-    <div className="flex h-full flex-col bg-white lg:flex-row">
-      <div className="w-full shrink-0 px-4 py-5 lg:w-[310px]" style={{ background: "#FFFFFF" }}>
-        <h1 style={{ fontSize: 30, fontWeight: 700, color: "#1C1C1C", lineHeight: 1.2 }}>Inbox</h1>
-        <p className="mt-2" style={{ fontSize: 13, color: "#6F6F6F", lineHeight: 1.55 }}>
-          Session reminders, note approvals, and ranking updates.
-        </p>
-      </div>
-      <div className="min-w-0 flex-1 bg-white overflow-y-auto">
-        <div className="max-w-2xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8 lg:pl-12">
-          <h1 style={{ fontSize: 34, fontWeight: 700, color: "#1C1C1C", lineHeight: 1.25 }}>Notifications</h1>
-          <div className="mt-3 flex flex-wrap items-center gap-2" style={{ fontSize: 13, color: "#F5A623", fontWeight: 500 }}>
-            <StatusBadge status={`${unreadCount} unread`} />
-            <button type="button" onClick={markAllRead} className="motion-button rounded-full px-3 py-1" style={{ background: "#F8F8F8", color: "#1C1C1C", fontSize: 12, fontWeight: 700 }}>
-              Mark all read
-            </button>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+        <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div><div className="section-kicker">Inbox</div><h1 className="page-heading">Notifications</h1><p className="page-description">Session reminders, attendance decisions, note reviews, points, and account updates.</p></div>
+          <div className="flex flex-wrap gap-2">
+            <button className="secondary-button" onClick={markAllNotifications} disabled={!unread}><CheckCheck size={15} /> Mark all read</button>
+            <button className="secondary-button danger-text" onClick={() => setConfirmClear(true)} disabled={!mine.length}><Trash2 size={15} /> Clear all</button>
           </div>
+        </header>
 
-          {notifications.length === 0 ? (
-            <div className="mt-6">
-              <EmptyState
-                icon={<Bell size={18} />}
-                title="No notifications"
-                body="Session reminders, approvals, and point updates will appear here."
-              />
-            </div>
-          ) : (
-            <ul className="mt-6 grid gap-2">
-              {notifications.map((n) => (
-                <li key={n.id} className="rounded-xl p-4 flex flex-col items-start gap-3 sm:flex-row" style={{ background: n.read ? "#FAF8F2" : "#F4F1E8" }}>
-                  <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "#fff" }}>
-                    {n.icon}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1C" }}>{n.title}</div>
-                      {!n.read && <StatusBadge status="Unread" />}
-                    </div>
-                    <div className="mt-0.5" style={{ fontSize: 13, color: "#6F6F6F", lineHeight: 1.55 }}>{n.body}</div>
-                  </div>
-                  <span style={{ fontSize: 12, color: "#6F6F6F" }}>{n.time}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div className="mt-8 flex items-center gap-2" style={{ fontSize: 12, color: "#6F6F6F" }}>
-            <Bell size={12} /> You are all caught up.
+        <div className="mt-6 flex flex-col gap-4 rounded-xl bg-white p-4 demo-card sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2"><Bell size={18} color="#F5A623" /><strong>{unread} unread</strong><span className="text-sm text-[#6F6F6F]">of {mine.length} notifications</span></div>
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Notification filters">
+            {filters.map((item) => <button key={item} role="tab" aria-selected={filter === item} className={`filter-chip ${filter === item ? "is-active" : ""}`} onClick={() => setFilter(item)}>{item}</button>)}
           </div>
         </div>
+
+        {visible.length ? <ul className="mt-4 grid gap-2">{visible.map((item) => <li key={item.id} className={`notification-row ${item.readAt ? "is-read" : "is-unread"}`}>
+          <button className="notification-main" onClick={() => openRelated(item)}>
+            <span className="notification-type-icon">{typeIcon(item.type)}</span>
+            <span className="min-w-0 flex-1 text-left"><span className="flex flex-wrap items-center gap-2"><strong>{item.title}</strong>{!item.readAt && <StatusBadge status="Unread" />}</span><span className="mt-1 block text-sm text-[#6F6F6F]">{item.message}</span><span className="mt-2 block text-xs text-[#8A8377]">{item.type} - {relativeTime(item.createdAt)}</span></span>
+          </button>
+          <div className="notification-actions">{item.readAt ? <button onClick={() => markNotification(item.id, false)}>Mark unread</button> : <button onClick={() => markNotification(item.id, true)}>Mark read</button>}<button aria-label={`Delete ${item.title}`} onClick={() => deleteNotification(item.id)}><Trash2 size={14} /></button></div>
+        </li>)}</ul> : <div className="mt-5"><EmptyState icon={<Bell size={18} />} title={filter === "All" ? "No notifications" : "Nothing in this filter"} body={filter === "All" ? "New Tutorial Clinic updates will appear here." : "Try another filter or return later for new updates."} /></div>}
       </div>
+      <ConfirmDialog open={confirmClear} title="Clear all notifications?" body="This permanently removes every notification for the current account from this browser." confirmLabel="Clear notifications" cancelLabel="Keep notifications" tone="error" onCancel={() => setConfirmClear(false)} onConfirm={() => { clearNotifications(); setConfirmClear(false); }} />
     </div>
   );
+}
+
+function typeIcon(type: NotificationType) {
+  if (type === "Event" || type === "Attendance") return <CalendarCheck size={17} />;
+  if (type === "Notes") return <FileCheck2 size={17} />;
+  if (type === "Points") return <Trophy size={17} />;
+  if (type === "Announcement") return <Megaphone size={17} />;
+  if (type === "Account") return <UserRound size={17} />;
+  return <Settings size={17} />;
 }

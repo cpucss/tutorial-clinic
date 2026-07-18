@@ -1,7 +1,15 @@
 
-  import { createRoot } from "react-dom/client";
-  import App from "./app/App.tsx";
-  import "./styles/index.css";
+import { createRoot } from "react-dom/client";
+import { HashRouter } from "react-router";
 
-  createRoot(document.getElementById("root")!).render(<App />);
-  
+import App from "./app/App.tsx";
+import { AppDataProvider } from "./context/AppDataContext.tsx";
+import "./styles/index.css";
+
+createRoot(document.getElementById("root")!).render(
+  <HashRouter>
+    <AppDataProvider>
+      <App />
+    </AppDataProvider>
+  </HashRouter>,
+);

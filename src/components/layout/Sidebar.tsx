@@ -15,10 +15,18 @@ import {
   NotebookTabs,
   UsersRound,
   ChevronsUpDown,
+  Settings,
+  CalendarDays,
+  Megaphone,
+  LifeBuoy,
+  Activity,
+  LayoutGrid,
+  X,
 } from "lucide-react";
 import { motion } from "motion/react";
+import { useEffect, useState } from "react";
 import type React from "react";
-import type { User as AppUser } from "../../types/user";
+import type { DemoUser } from "../../types/app";
 
 export type TabKey =
   | "dashboard"
@@ -31,6 +39,11 @@ export type TabKey =
   | "notifications"
   | "favourites"
   | "my-notes"
+  | "settings"
+  | "schedule"
+  | "points-history"
+  | "announcements"
+  | "help"
   | "admin-dashboard"
   | "admin-attendance"
   | "admin-sessions"
@@ -55,6 +68,13 @@ const utilityItems: NavItem[] = [
     label: "Notifications",
     icon: <Bell size={18} strokeWidth={1.75} />,
   },
+  {
+    key: "settings",
+    label: "Settings",
+    icon: <Settings size={18} strokeWidth={1.75} />,
+  },
+  { key: "announcements", label: "Announcements", icon: <Megaphone size={18} strokeWidth={1.75} /> },
+  { key: "help", label: "Help & Support", icon: <LifeBuoy size={18} strokeWidth={1.75} /> },
 ];
 
 const workspaceItems: NavItem[] = [
@@ -68,6 +88,7 @@ const workspaceItems: NavItem[] = [
     label: "Events",
     icon: <Calendar size={18} strokeWidth={1.75} />,
   },
+  { key: "schedule", label: "My Schedule", icon: <CalendarDays size={18} strokeWidth={1.75} /> },
   {
     key: "attendance-history",
     label: "Attendance",
@@ -86,6 +107,7 @@ const workspaceItems: NavItem[] = [
 ];
 
 const personalItems: NavItem[] = [
+  { key: "points-history", label: "Point History", icon: <Activity size={18} strokeWidth={1.75} /> },
   {
     key: "my-notes",
     label: "My Notes",
@@ -143,130 +165,183 @@ export function Sidebar({
 }: {
   active: TabKey;
   onChange: (k: TabKey) => void;
-  role: AppUser["role"];
+  role: DemoUser["role"];
 }) {
   const canSeeAdmin = role === "admin";
+  const [moreOpen, setMoreOpen] = useState(false);
+  const roleUtilityItems = canSeeAdmin
+    ? utilityItems.filter((item) => item.key !== "points")
+    : utilityItems;
+  const mobilePrimaryItems = canSeeAdmin
+    ? adminItems.slice(0, 4)
+    : workspaceItems.slice(0, 4);
+  const mobileLeadingItems = mobilePrimaryItems.slice(0, 2);
+  const mobileTrailingItems = mobilePrimaryItems.slice(2);
+  const moreIsActive = moreOpen || !mobilePrimaryItems.some((item) => item.key === active);
+  const featureCount = roleUtilityItems.length + (canSeeAdmin
+    ? adminItems.length
+    : workspaceItems.length + personalItems.length);
+
+  useEffect(() => setMoreOpen(false), [active]);
+
+  function choose(key: TabKey) {
+    setMoreOpen(false);
+    onChange(key);
+  }
 
   return (
     <aside
-      className="app-sidebar w-[220px] shrink-0 h-dvh overflow-y-auto flex flex-col px-3 py-5"
+      className="app-sidebar w-[220px] shrink-0 h-dvh"
       style={{ background: "#FFFFFF" }}
       aria-label="Primary navigation"
     >
-      <div className="sidebar-brand flex items-center justify-between px-2 mb-5">
-        <div className="flex items-center gap-2">
-          <div
-            className="w-7 h-7 rounded-full flex items-center justify-center"
-            style={{ background: "#F5A623" }}
-          >
+      <div className="sidebar-desktop-content">
+        <div className="sidebar-brand flex items-center justify-between px-2 mb-5">
+          <div className="flex items-center gap-2">
+            <div
+              className="w-7 h-7 rounded-full flex items-center justify-center"
+              style={{ background: "#F5A623" }}
+            >
+              <span
+                style={{
+                  color: "#fff",
+                  fontSize: 14,
+                  fontWeight: 700,
+                }}
+              >
+                T
+              </span>
+            </div>
+
             <span
+              className="truncate"
               style={{
-                color: "#fff",
                 fontSize: 14,
-                fontWeight: 700,
+                fontWeight: 500,
+                color: "#1C1C1C",
               }}
             >
-              T
+              CCS Tutorial Clinic
             </span>
           </div>
 
-          <span
-            className="truncate"
-            style={{
-              fontSize: 14,
-              fontWeight: 500,
-              color: "#1C1C1C",
-            }}
-          >
-            CCS Tutorial Clinic
-          </span>
+          <ChevronsUpDown
+            size={15}
+            color="#6F6F6F"
+            strokeWidth={1.75}
+          />
         </div>
 
-        <ChevronsUpDown
-          size={15}
-          color="#6F6F6F"
-          strokeWidth={1.75}
+        <NavGroup
+          items={roleUtilityItems}
+          active={active}
+          onChange={onChange}
         />
-      </div>
 
-      <NavGroup
-        items={utilityItems}
-        active={active}
-        onChange={onChange}
-      />
-
-      <div
-        className="sidebar-section-label px-2 mt-5 mb-2"
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.08em",
-          color: "#6F6F6F",
-        }}
-      >
-        WORKSPACE
-      </div>
-
-      <NavGroup
-        items={workspaceItems}
-        active={active}
-        onChange={onChange}
-      />
-
-      <div
-        className="sidebar-section-label px-2 mt-5 mb-2"
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.08em",
-          color: "#6F6F6F",
-        }}
-      >
-        PERSONAL
-      </div>
-
-      <NavGroup
-        items={personalItems}
-        active={active}
-        onChange={onChange}
-      />
-
-      {canSeeAdmin && (
-        <>
-          <div
-            className="sidebar-section-label px-2 mt-5 mb-2"
-            style={{
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: "#6F6F6F",
-            }}
-          >
-            ADMIN
-          </div>
-
-          <NavGroup
-            items={adminItems}
-            active={active}
-            onChange={onChange}
-          />
-        </>
-      )}
-
-      <div
-        className="sidebar-footer mt-auto px-3 pt-4"
-        style={{
-          borderTop: "1px solid #F0EFE9",
-        }}
-      >
-        <div
+        {!canSeeAdmin && <><div
+          className="sidebar-section-label px-2 mt-5 mb-2"
           style={{
-            fontSize: 12,
+            fontSize: 11,
+            letterSpacing: "0.08em",
             color: "#6F6F6F",
           }}
         >
-          CCS Tutorial Clinic MVP
+          WORKSPACE
+        </div>
+
+        <NavGroup
+          items={workspaceItems}
+          active={active}
+          onChange={onChange}
+        />
+
+        <div
+          className="sidebar-section-label px-2 mt-5 mb-2"
+          style={{
+            fontSize: 11,
+            letterSpacing: "0.08em",
+            color: "#6F6F6F",
+          }}
+        >
+          PERSONAL
+        </div>
+
+        <NavGroup
+          items={personalItems}
+          active={active}
+          onChange={onChange}
+        /></>}
+
+        {canSeeAdmin && (
+          <>
+            <div
+              className="sidebar-section-label px-2 mt-5 mb-2"
+              style={{
+                fontSize: 11,
+                letterSpacing: "0.08em",
+                color: "#6F6F6F",
+              }}
+            >
+              ADMIN
+            </div>
+
+            <NavGroup
+              items={adminItems}
+              active={active}
+              onChange={onChange}
+            />
+          </>
+        )}
+
+        <div
+          className="sidebar-footer mt-auto px-3 pt-4"
+          style={{
+            borderTop: "1px solid #F0EFE9",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: "#6F6F6F",
+            }}
+          >
+            Student learning portal
+          </div>
         </div>
       </div>
+
+      <nav className="mobile-nav-bar" aria-label="Mobile navigation">
+        {mobileLeadingItems.map((item) => <MobileNavButton key={item.key} item={item} active={active === item.key} onClick={() => choose(item.key)} />)}
+        <button className={`mobile-nav-button mobile-nav-more ${moreIsActive ? "is-active" : ""}`} type="button" onClick={() => setMoreOpen(true)} aria-label="More" aria-haspopup="dialog" aria-expanded={moreOpen}>
+          <span className="mobile-nav-more-icon"><LayoutGrid size={21} strokeWidth={2} /></span>
+          <span className="mobile-nav-more-label">More</span>
+        </button>
+        {mobileTrailingItems.map((item) => <MobileNavButton key={item.key} item={item} active={active === item.key} onClick={() => choose(item.key)} />)}
+      </nav>
+
+      {moreOpen && <div className="mobile-more-overlay" onMouseDown={() => setMoreOpen(false)}>
+        <section className="mobile-more-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-navigation-title" onMouseDown={(event) => event.stopPropagation()}>
+          <header>
+            <div><span>Navigation hub</span><h2 id="mobile-navigation-title">All features</h2><p>{featureCount} tools available for your account</p></div>
+            <button className="mobile-sheet-close" type="button" aria-label="Close mobile navigation" onClick={() => setMoreOpen(false)}><X size={18} /></button>
+          </header>
+          <div className="mobile-more-content">
+            <MobileMenuGroup label="Account & updates" items={roleUtilityItems} active={active} onChange={choose} />
+            {!canSeeAdmin && <><MobileMenuGroup label="Workspace" items={workspaceItems} active={active} onChange={choose} /><MobileMenuGroup label="Personal" items={personalItems} active={active} onChange={choose} /></>}
+            {canSeeAdmin && <MobileMenuGroup label="Administration" items={adminItems} active={active} onChange={choose} />}
+          </div>
+        </section>
+      </div>}
     </aside>
   );
+}
+
+function MobileNavButton({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {
+  return <button className={`mobile-nav-button ${active ? "is-active" : ""}`} type="button" onClick={onClick} aria-current={active ? "page" : undefined}>{item.icon}<span>{item.label.replace("Admin ", "").replace("My ", "")}</span></button>;
+}
+
+function MobileMenuGroup({ label, items, active, onChange }: { label: string; items: NavItem[]; active: TabKey; onChange: (key: TabKey) => void }) {
+  return <section className="mobile-menu-group"><h3>{label}</h3><div>{items.map((item) => <button type="button" key={item.key} className={active === item.key ? "is-active" : ""} aria-current={active === item.key ? "page" : undefined} onClick={() => onChange(item.key)}><span>{item.icon}</span><strong>{item.label}</strong></button>)}</div></section>;
 }
 
 function NavGroup({
@@ -300,17 +375,6 @@ function NavGroup({
               fontWeight: isActive ? 700 : 400,
             }}
           >
-            {isActive && (
-              <motion.span
-                layoutId="sidebar-active-rail"
-                className="sidebar-active-rail absolute left-0 top-1 bottom-1 w-[3px] rounded-full"
-                style={{
-                  background: "#F5A623",
-                }}
-                transition={{ type: "spring", stiffness: 520, damping: 34 }}
-              />
-            )}
-
             <span
               style={{
                 color: isActive ? "#F5A623" : "#2D2D2D",

@@ -1,144 +1,32 @@
-import { useState } from "react";
-import { Bell, LogOut, MoreHorizontal, Settings, Share2, UserRound } from "lucide-react";
-
-import type { User } from "../../types/user";
+import { useEffect, useMemo, useState } from "react";
+import { Bell, BookOpen, CalendarDays, FileText, HelpCircle, LogOut, Megaphone, Search, Settings, Share2, UserRound, X } from "lucide-react";
+import { EmptyState, StatusBadge } from "../common/Feedback";
+import { useAppData } from "../../context/AppDataContext";
+import { relativeTime } from "../../utils/format";
 import type { TabKey } from "./Sidebar";
 
-const breadcrumbTargets: Record<string, TabKey> = {
-  Dashboard: "dashboard",
-  Events: "events",
-  Attendance: "attendance-history",
-  Leaderboard: "leaderboard",
-  "Notes Library": "notes",
-  "My Profile": "profile",
-  "Points Guideline": "points",
-  Notifications: "notifications",
-  Favourites: "favourites",
-  "My Notes": "my-notes",
-  Admin: "admin-dashboard",
-  Sessions: "admin-sessions",
-  "Notes Approval": "admin-notes",
-  Students: "admin-students",
-  Subjects: "admin-subjects",
-};
+const breadcrumbTargets: Record<string, TabKey> = { Dashboard: "dashboard", Events: "events", Attendance: "attendance-history", Leaderboard: "leaderboard", "Notes Library": "notes", Profile: "profile", "Points Guide": "points", Notifications: "notifications", Favourites: "favourites", "My Notes": "my-notes", Settings: "settings", "My Schedule": "schedule", "Point History": "points-history", Announcements: "announcements", Help: "help", Admin: "admin-dashboard", Sessions: "admin-sessions", "Notes Approval": "admin-notes", Students: "admin-students", Subjects: "admin-subjects" };
+const helpResults = [{ title: "Attendance instructions", tab: "help" as TabKey, keywords: "qr code scan check in" }, { title: "Notes submission guide", tab: "help" as TabKey, keywords: "upload review file" }, { title: "Account setup guide", tab: "help" as TabKey, keywords: "email password first login" }];
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-}
-
-export function TopBar({
-  title,
-  user,
-  onNavigate,
-  onLogout,
-  onShare,
-}: {
-  title: string;
-  user: User;
-  onNavigate: (tab: TabKey) => void;
-  onLogout: () => void;
-  onShare: () => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const parts = title.split("/").map((part) => part.trim()).filter(Boolean);
-
-  return (
-    <div className="top-bar relative min-h-12 px-6 py-2 flex items-center justify-between gap-4" style={{ background: "#fff" }}>
-      <nav className="topbar-breadcrumbs" aria-label="Breadcrumb">
-        {parts.map((part, index) => {
-          const target = breadcrumbTargets[part];
-          const isLast = index === parts.length - 1;
-          return (
-            <span key={`${part}-${index}`} className="min-w-0 flex items-center gap-1">
-              {target && !isLast ? (
-                <button type="button" className="topbar-crumb" onClick={() => onNavigate(target)}>
-                  {part}
-                </button>
-              ) : (
-                <span className="topbar-crumb" aria-current={isLast ? "page" : undefined}>
-                  {part}
-                </span>
-              )}
-              {!isLast && <span aria-hidden="true">/</span>}
-            </span>
-          );
-        })}
-      </nav>
-      <div className="flex shrink-0 items-center gap-4">
-        <button
-          type="button"
-          className="motion-button top-action rounded-full px-3 py-1 flex items-center gap-1.5"
-          style={{ fontSize: 13, fontWeight: 700, color: "#1C1C1C" }}
-          onClick={onShare}
-        >
-          <Share2 size={14} />
-          Share
-        </button>
-        <button
-          type="button"
-          className="icon-button motion-button rounded-full relative"
-          aria-label="Notifications"
-          onClick={() => onNavigate("notifications")}
-        >
-          <Bell size={16} color="#2D2D2D" strokeWidth={1.75} />
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full" style={{ background: "#E69B22" }} />
-        </button>
-        <button
-          type="button"
-          className="avatar-pop w-8 h-8 rounded-full flex items-center justify-center"
-          style={{ background: "#1C1C1C", color: "#fff", fontSize: 11, fontWeight: 800, border: "2px solid #fff" }}
-          onClick={() => setMenuOpen((open) => !open)}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-label="Open user menu"
-        >
-          {initials(user.name)}
-        </button>
-        <button
-          type="button"
-          className="icon-button motion-button rounded-full"
-          aria-label="More options"
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          <MoreHorizontal size={16} color="#2D2D2D" strokeWidth={1.75} />
-        </button>
-
-        {menuOpen && (
-          <div className="user-menu" role="menu">
-            <div className="user-menu-header">
-              <div style={{ fontSize: 13, fontWeight: 800, color: "#1C1C1C" }}>{user.name}</div>
-              <div style={{ fontSize: 12, color: "#6F6F6F" }}>
-                {user.role} / {user.email}
-              </div>
-            </div>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onNavigate("profile");
-              }}
-            >
-              <UserRound size={15} /> Profile
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => setMenuOpen(false)}
-            >
-              <Settings size={15} /> Settings
-            </button>
-            <button type="button" role="menuitem" onClick={onLogout}>
-              <LogOut size={15} /> Log out
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+export function TopBar({ title, onNavigate, onLogout, onShare }: { title: string; onNavigate: (tab: TabKey) => void; onLogout: () => void; onShare: () => void }) {
+  const { state, currentUser, unreadCount, markNotification } = useAppData(); const [menuOpen, setMenuOpen] = useState(false); const [notificationsOpen, setNotificationsOpen] = useState(false); const [searchOpen, setSearchOpen] = useState(false); const [query, setQuery] = useState(""); const parts = title.split("/").map((part) => part.trim()).filter(Boolean); const notifications = state.notifications.filter((item) => item.userId === currentUser?.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 5);
+  const results = useMemo(() => { if (!query.trim()) return []; const q = query.toLowerCase(); return [
+    ...state.events.filter((item) => `${item.title} ${item.description} ${item.instructor}`.toLowerCase().includes(q)).map((item) => ({ id: item.id, title: item.title, subtitle: "Session", tab: "events" as TabKey, icon: <CalendarDays /> })),
+    ...state.subjects.filter((item) => `${item.code} ${item.name}`.toLowerCase().includes(q)).map((item) => ({ id: item.id, title: `${item.code} - ${item.name}`, subtitle: "Subject", tab: "notes" as TabKey, icon: <BookOpen /> })),
+    ...state.notes.filter((item) => item.status === "Approved" && `${item.title} ${item.description} ${item.tags.join(" ")}`.toLowerCase().includes(q)).map((item) => ({ id: item.id, title: item.title, subtitle: "Approved note", tab: "notes" as TabKey, icon: <FileText /> })),
+    ...state.announcements.filter((item) => `${item.title} ${item.body}`.toLowerCase().includes(q)).map((item) => ({ id: item.id, title: item.title, subtitle: "Announcement", tab: "announcements" as TabKey, icon: <Megaphone /> })),
+    ...helpResults.filter((item) => `${item.title} ${item.keywords}`.toLowerCase().includes(q)).map((item, index) => ({ id: `help-${index}`, title: item.title, subtitle: "Help article", tab: item.tab, icon: <HelpCircle /> })),
+  ].slice(0, 12); }, [query, state.announcements, state.events, state.notes, state.subjects]);
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setSearchOpen(true); }
+      if (event.key === "Escape") { setSearchOpen(false); setMenuOpen(false); setNotificationsOpen(false); }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, []);
+  if (!currentUser) return null;
+  const currentUserName = currentUser.name;
+  function initials() { return currentUserName.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join(""); }
+  return <><header className="top-bar"><nav className="topbar-breadcrumbs" aria-label="Breadcrumb">{parts.map((part, index) => { const target = breadcrumbTargets[part]; const last = index === parts.length - 1; return <span key={`${part}-${index}`}>{target && !last ? <button className="topbar-crumb" onClick={() => onNavigate(target)}>{part}</button> : <span className="topbar-crumb" aria-current={last ? "page" : undefined}>{part}</span>}{!last && <span aria-hidden="true">/</span>}</span>; })}</nav><div className="topbar-actions"><button className="topbar-search-button" aria-label="Open global search" onClick={() => setSearchOpen(true)}><Search size={15} /><span>Search</span><kbd>Ctrl K</kbd></button><button className="icon-button" aria-label="Share current page" onClick={onShare}><Share2 size={16} /></button><div className="relative"><button className="icon-button relative" aria-label={`${unreadCount} unread notifications`} onClick={() => { setNotificationsOpen((open) => !open); setMenuOpen(false); }}><Bell size={17} />{unreadCount > 0 && <span className="notification-count">{unreadCount > 9 ? "9+" : unreadCount}</span>}</button>{notificationsOpen && <div className="topbar-popover notification-popover"><div className="popover-heading"><div><strong>Notifications</strong><span>{unreadCount} unread</span></div><button aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}><X size={15} /></button></div>{notifications.length ? <ul>{notifications.map((item) => <li key={item.id}><button onClick={() => { markNotification(item.id); setNotificationsOpen(false); if (item.relatedTab) onNavigate(item.relatedTab as TabKey); }}><span className={!item.readAt ? "unread-dot" : ""} /><span><strong>{item.title}</strong><small>{item.message}</small><em>{relativeTime(item.createdAt)}</em></span></button></li>)}</ul> : <EmptyState title="No notifications" body="You are all caught up." />}<button className="popover-footer" onClick={() => { setNotificationsOpen(false); onNavigate("notifications"); }}>View all notifications</button></div>}</div><div className="relative"><button className="avatar-pop" aria-label="Open account menu" aria-expanded={menuOpen} onClick={() => { setMenuOpen((open) => !open); setNotificationsOpen(false); }}>{initials()}</button>{menuOpen && <div className="topbar-popover user-menu"><div className="user-menu-header"><strong>{currentUser.name}</strong><span>{currentUser.studentId} - {currentUser.role}</span></div><button onClick={() => { setMenuOpen(false); onNavigate("profile"); }}><UserRound size={15} /> Profile</button><button onClick={() => { setMenuOpen(false); onNavigate("settings"); }}><Settings size={15} /> Settings</button><button onClick={onLogout}><LogOut size={15} /> Log out</button></div>}</div></div></header>{searchOpen && <div className="global-search-overlay" onMouseDown={() => setSearchOpen(false)}><div className="global-search-dialog" role="dialog" aria-modal="true" aria-label="Global search" onMouseDown={(e) => e.stopPropagation()}><div className="global-search-input"><Search size={18} /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search events, subjects, notes, announcements, or help" /><button aria-label="Close global search" onClick={() => setSearchOpen(false)}><X size={16} /></button></div><div className="global-search-results">{query && !results.length && <EmptyState title="No results found" body="Try a different title, subject, tag, or keyword." />}{results.map((result) => <button key={`${result.subtitle}-${result.id}`} onClick={() => { setSearchOpen(false); setQuery(""); onNavigate(result.tab); }}><span>{result.icon}</span><span><strong>{result.title}</strong><small>{result.subtitle}</small></span></button>)}{!query && <div className="global-search-hint">Start typing to search the complete Tutorial Clinic.</div>}</div></div></div>}</>;
 }

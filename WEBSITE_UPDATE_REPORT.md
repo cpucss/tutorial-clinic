@@ -41,10 +41,11 @@ Main files:
 - Added clickable breadcrumb-style navigation in the top bar.
 - Added a user menu with:
   - Profile
-  - Settings placeholder
+  - Working settings page
   - Logout
 - Added notification shortcut with unread indicator.
-- Added a working Share button with toast feedback.
+- Added a working Share button that copies the current hash route, with fallback feedback when clipboard access is unavailable.
+- Added shareable front-end routes, per-user RSVP and attendance persistence, a complete attendance history/check-in flow, and local accessibility preferences.
 - Added a skip-to-content link for keyboard users.
 - Changed mobile navigation into a compact fixed bottom nav.
 
@@ -226,11 +227,10 @@ Build passed.
 
 ## Suggested Next Developer Tasks
 
-1. Add real React Router routes.
-2. Connect login/register to a backend API.
-3. Add protected route guards.
-4. Replace mock data in `src/mock/index.ts` with API calls.
-5. Add database tables for users, events, RSVPs, attendance, notes, points, and notifications.
-6. Add file storage for uploaded notes.
-7. Persist toasts and notifications through backend events.
-8. Add tests for auth, RSVP, upload, attendance, and admin moderation flows.
+1. Connect login/register to a backend API and secure session.
+2. Enforce role guards on the server.
+3. Replace mock data in `src/mock/index.ts` with API calls.
+4. Add database tables for users, events, RSVPs, attendance, notes, points, and notifications.
+5. Add file storage for uploaded notes.
+6. Persist toasts and notifications through backend events.
+7. Add tests for auth, RSVP, upload, attendance, and admin moderation flows.

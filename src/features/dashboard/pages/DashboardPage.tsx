@@ -1,175 +1,81 @@
-import {
-  Bell,
-  BookOpen,
-  Calendar,
-  ChevronRight,
-  ClipboardCheck,
-  Trophy,
-  User,
-} from "lucide-react";
+import { Bell, BookOpen, Calendar, ChevronRight, ClipboardCheck, Megaphone, QrCode, Star, Trophy } from "lucide-react";
 
-import { currentUser, events, leaderboard, notes } from "../../../mock";
 import type { TabKey } from "../../../components/layout/Sidebar";
-
-const activity = [
-  { label: "Attendance confirmed", meta: "Database Design Clinic / +40 pts" },
-  { label: "Note awaiting review", meta: "ER diagram practice set" },
-  { label: "Rank updated", meta: "You moved into the Junior top 5" },
-];
+import { EmptyState, StatusBadge } from "../../../components/common/Feedback";
+import { getRsvpCount, getUserPoints, useAppData } from "../../../context/AppDataContext";
+import { formatDateTime, relativeTime } from "../../../utils/format";
 
 export function DashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => void }) {
-  const approvedNotes = notes.filter((note) => note.status === "Approved");
-  const myNotes = notes.filter((note) => note.uploader === currentUser.name);
-  const sorted = [...leaderboard].sort((a, b) => b.points - a.points);
-  const rank = sorted.findIndex((entry) => entry.name === currentUser.name) + 1 || 5;
-  const upcoming = events
-    .filter((event) => new Date(event.date) >= new Date())
-    .slice(0, 3);
+  const { state, currentUser, currentPoints, unreadCount } = useAppData();
+  if (!currentUser) return null;
+  const approvedAttendance = state.attendance.filter((record) => record.userId === currentUser.id && record.status === "Approved");
+  const attendanceTotal = state.attendance.filter((record) => record.userId === currentUser.id && record.status !== "Rejected").length;
+  const attendanceRate = attendanceTotal ? Math.round((approvedAttendance.length / attendanceTotal) * 100) : 0;
+  const myNotes = state.notes.filter((note) => note.uploaderId === currentUser.id);
+  const approvedNotes = myNotes.filter((note) => note.status === "Approved").length;
+  const pendingNotes = myNotes.filter((note) => note.status === "Pending").length;
+  const ranking = state.users.filter((user) => user.role !== "admin").map((user) => ({ user, points: getUserPoints(state, user.id) })).sort((a, b) => b.points - a.points);
+  const rank = ranking.findIndex((item) => item.user.id === currentUser.id) + 1;
+  const scheduledIds = new Set([...(state.scheduleEventIds[currentUser.id] ?? []), ...state.rsvps.filter((item) => item.userId === currentUser.id).map((item) => item.eventId)]);
+  const upcoming = state.events.filter((event) => scheduledIds.has(event.id) && new Date(event.endDate) > new Date() && event.status !== "Cancelled").sort((a, b) => +new Date(a.date) - +new Date(b.date)).slice(0, 3);
+  const recentNotifications = state.notifications.filter((item) => item.userId === currentUser.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 4);
+  const announcement = state.announcements.filter((item) => item.audience === "All" || item.audience === currentUser.yearLevel).sort((a, b) => Number(b.pinned) - Number(a.pinned) || +new Date(b.publishedAt) - +new Date(a.publishedAt))[0];
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
-        <section className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.75fr] gap-5">
-          <div className="motion-card rounded-xl p-6" style={{ background: "#FFFFFF", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-            <div style={{ fontSize: 12, color: "#6F6F6F" }}>Student home</div>
-            <h1 className="mt-1" style={{ fontSize: 34, fontWeight: 700, color: "#1C1C1C", lineHeight: 1.2 }}>
-              Welcome back, {currentUser.name.split(" ")[0]}
-            </h1>
-            <p className="mt-3 max-w-xl" style={{ fontSize: 14, color: "#6F6F6F", lineHeight: 1.65 }}>
-              Track your Tutorial Clinic points, check upcoming sessions, and jump back into notes or profile updates.
-            </p>
-
-            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              <InfoPill label="Student ID" value={currentUser.studentId} />
-              <InfoPill label="Year level" value={currentUser.yearLevel} />
-              <InfoPill label="Email" value={currentUser.email} />
-            </div>
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+        <section className="grid gap-5 xl:grid-cols-[1.3fr_.7fr]">
+          <div className="motion-card rounded-xl bg-white p-6 demo-card">
+            <div className="section-kicker">Student dashboard</div>
+            <h1 className="page-heading mt-1">Welcome back, {currentUser.name.split(" ")[0]}</h1>
+            <p className="page-description">Your next study sessions, contributions, attendance, and community updates are all ready in one place.</p>
+            <dl className="mt-6 grid gap-3 sm:grid-cols-3">
+              <Info label="Student ID" value={currentUser.studentId} />
+              <Info label="Program" value={currentUser.program} />
+              <Info label="Year and section" value={`${currentUser.yearLevel} - ${currentUser.section}`} />
+            </dl>
           </div>
-
-          <div className="motion-card dark-card rounded-xl p-5 flex flex-col justify-between" style={{ background: "#1C1C1C" }}>
-            <div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.58)" }}>Current standing</div>
-              <div className="mt-2" style={{ fontSize: 44, fontWeight: 700, color: "#FFFFFF", lineHeight: 1 }}>
-                #{rank}
-              </div>
-              <div className="mt-2" style={{ fontSize: 13, color: "#F5A623", fontWeight: 500 }}>
-                {currentUser.points} total points
-              </div>
-            </div>
-            <button
-              onClick={() => onNavigate?.("leaderboard")}
-              className="motion-button mt-6 flex items-center justify-between rounded-full px-4 py-2"
-              style={{ background: "#FFFFFF", color: "#1C1C1C", fontSize: 13, fontWeight: 500 }}
-            >
-              View Leaderboard
-              <ChevronRight size={14} />
-            </button>
+          <div className="motion-card rounded-xl p-5 text-white" style={{ background: "#1C1C1C" }}>
+            <div style={{ color: "rgba(255,255,255,.65)", fontSize: 12 }}>Current standing</div>
+            <div className="mt-3 flex items-end justify-between"><strong style={{ fontSize: 46 }}>#{rank || "-"}</strong><Trophy color="#F5A623" size={28} /></div>
+            <div style={{ color: "#F5A623", fontSize: 14, fontWeight: 800 }}>{currentPoints} points</div>
+            <button className="motion-button mt-6 flex w-full items-center justify-between rounded-full bg-white px-4 py-2 text-sm font-bold text-black" onClick={() => onNavigate?.("leaderboard")}>View leaderboard <ChevronRight size={15} /></button>
           </div>
         </section>
 
-        <section className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          <MetricCard icon={<Trophy size={18} />} label="Total points" value={currentUser.points.toString()} detail="+40 from last session" />
-          <MetricCard icon={<ClipboardCheck size={18} />} label="Attendance count" value="8" detail="3 sessions this month" />
-          <MetricCard icon={<BookOpen size={18} />} label="Notes contributed" value={myNotes.length.toString()} detail={`${approvedNotes.length} approved notes in library`} />
+        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric icon={<Trophy />} label="Total points" value={String(currentPoints)} detail="View full point history" onClick={() => onNavigate?.("points-history")} />
+          <Metric icon={<ClipboardCheck />} label="Attendance" value={`${attendanceRate}%`} detail={`${approvedAttendance.length} approved sessions`} onClick={() => onNavigate?.("attendance-history")} />
+          <Metric icon={<BookOpen />} label="Approved notes" value={String(approvedNotes)} detail={`${pendingNotes} awaiting review`} onClick={() => onNavigate?.("my-notes")} />
+          <Metric icon={<Bell />} label="Unread updates" value={String(unreadCount)} detail="Open notification inbox" onClick={() => onNavigate?.("notifications")} />
         </section>
 
-        <section className="mt-5 grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-5 items-start">
-          <Panel title="Upcoming tutorial sessions" action="View Events" onAction={() => onNavigate?.("events")}>
-            <div className="flex flex-col gap-3">
-              {(upcoming.length ? upcoming : events.slice(0, 3)).map((event) => {
-                const date = new Date(event.date);
-                return (
-                  <div key={event.id} className="motion-card nested-card rounded-xl p-4" style={{ background: "#FAF8F2" }}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: "#1C1C1C" }}>{event.title}</div>
-                        <div className="mt-1" style={{ fontSize: 12, color: "#6F6F6F" }}>
-                          {event.venue} / {date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} at {date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                        </div>
-                      </div>
-                      <span className="rounded-full px-2.5 py-1" style={{ background: "#FFFFFF", color: "#F5A623", fontSize: 11, fontWeight: 700 }}>
-                        {event.rsvps}/{event.capacity}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+        <section className="mt-5 grid items-start gap-5 xl:grid-cols-[1fr_340px]">
+          <Panel title="Upcoming schedule" action="Open My Schedule" onAction={() => onNavigate?.("schedule")}>
+            {upcoming.length ? <div className="grid gap-3">{upcoming.map((event) => <button key={event.id} className="nested-card rounded-xl bg-[#FAF8F2] p-4 text-left" onClick={() => onNavigate?.("events")}><div className="flex justify-between gap-3"><div><div className="font-bold text-[#1C1C1C]">{event.title}</div><div className="mt-1 text-xs text-[#6F6F6F]">{formatDateTime(event.date)} - {event.venue}</div></div><StatusBadge status={`${getRsvpCount(state, event.id)}/${event.capacity} going`} /></div></button>)}</div> : <EmptyState title="Your schedule is open" body="RSVP to a session or add one from Events to see it here." actionLabel="Browse sessions" onAction={() => onNavigate?.("events")} />}
           </Panel>
-
-          <Panel title="Recent activity">
-            <div className="flex flex-col gap-3">
-              {activity.map((item) => (
-                <div key={item.label} className="flex gap-3">
-                  <span className="mt-1 h-2 w-2 rounded-full shrink-0" style={{ background: "#F5A623" }} />
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#1C1C1C" }}>{item.label}</div>
-                    <div style={{ fontSize: 12, color: "#6F6F6F" }}>{item.meta}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Panel>
+          <div className="grid gap-5">
+            {announcement && <Panel title="Important announcement" action="View all" onAction={() => onNavigate?.("announcements")}><div className="flex gap-3"><Megaphone size={18} color="#F5A623" /><div><div className="font-bold text-sm">{announcement.title}</div><p className="mt-1 text-xs leading-relaxed text-[#6F6F6F]">{announcement.body}</p></div></div></Panel>}
+            <Panel title="Recent activity" action="Notifications" onAction={() => onNavigate?.("notifications")}>
+              {recentNotifications.length ? <ul className="grid gap-3">{recentNotifications.map((item) => <li key={item.id} className="flex gap-3"><span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#F5A623]" /><div><div className="text-sm font-bold">{item.title}</div><div className="text-xs text-[#6F6F6F]">{relativeTime(item.createdAt)}</div></div></li>)}</ul> : <EmptyState title="No recent activity" body="Your latest account activity will appear here." />}
+            </Panel>
+          </div>
         </section>
 
-        <section className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <QuickButton icon={<Calendar size={16} />} label="View Events" onClick={() => onNavigate?.("events")} />
-          <QuickButton icon={<BookOpen size={16} />} label="View Notes" onClick={() => onNavigate?.("notes")} />
-          <QuickButton icon={<Trophy size={16} />} label="View Leaderboard" onClick={() => onNavigate?.("leaderboard")} />
-          <QuickButton icon={<User size={16} />} label="View Profile" onClick={() => onNavigate?.("profile")} />
+        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          <Quick icon={<Calendar />} label="Browse Sessions" onClick={() => onNavigate?.("events")} />
+          <Quick icon={<Star />} label="My Schedule" onClick={() => onNavigate?.("schedule")} />
+          <Quick icon={<QrCode />} label="Scan Attendance" onClick={() => onNavigate?.("attendance-history")} />
+          <Quick icon={<BookOpen />} label="Upload Notes" onClick={() => onNavigate?.("my-notes")} />
+          <Quick icon={<Trophy />} label="Leaderboard" onClick={() => onNavigate?.("leaderboard")} />
+          <Quick icon={<Bell />} label="Notifications" onClick={() => onNavigate?.("notifications")} />
         </section>
       </div>
     </div>
   );
 }
 
-function InfoPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="motion-card nested-card rounded-xl px-4 py-3" style={{ background: "#FAF8F2" }}>
-      <div style={{ fontSize: 11, color: "#6F6F6F" }}>{label}</div>
-      <div className="mt-1 truncate" style={{ fontSize: 13, fontWeight: 700, color: "#1C1C1C" }}>{value}</div>
-    </div>
-  );
-}
-
-function MetricCard({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail: string }) {
-  return (
-    <div className="motion-card rounded-xl p-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-      <div className="flex items-center justify-between">
-        <span style={{ color: "#F5A623" }}>{icon}</span>
-        <Bell size={15} color="#6F6F6F" />
-      </div>
-      <div className="mt-4" style={{ fontSize: 28, fontWeight: 700, color: "#1C1C1C", lineHeight: 1 }}>{value}</div>
-      <div className="mt-2" style={{ fontSize: 13, fontWeight: 700, color: "#1C1C1C" }}>{label}</div>
-      <div style={{ fontSize: 12, color: "#6F6F6F" }}>{detail}</div>
-    </div>
-  );
-}
-
-function Panel({ title, action, onAction, children }: { title: string; action?: string; onAction?: () => void; children: React.ReactNode }) {
-  return (
-    <div className="motion-card rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-      <div className="mb-4 flex items-center justify-between">
-        <h2 style={{ fontSize: 19, fontWeight: 700, color: "#1C1C1C" }}>{title}</h2>
-        {action && (
-          <button onClick={onAction} className="motion-button rounded-full px-3 py-1" style={{ background: "#F8F8F8", color: "#1C1C1C", fontSize: 12, fontWeight: 500 }}>
-            {action}
-          </button>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function QuickButton({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick?: () => void }) {
-  return (
-    <button onClick={onClick} className="motion-card motion-button rounded-xl p-4 text-left flex items-center justify-between" style={{ background: "#FFFFFF", color: "#1C1C1C", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-      <span className="flex items-center gap-2" style={{ fontSize: 13, fontWeight: 700 }}>
-        <span style={{ color: "#F5A623" }}>{icon}</span>
-        {label}
-      </span>
-      <ChevronRight size={14} color="#6F6F6F" />
-    </button>
-  );
-}
+function Info({ label, value }: { label: string; value: string }) { return <div className="rounded-xl bg-[#FAF8F2] px-4 py-3"><dt className="text-[11px] text-[#6F6F6F]">{label}</dt><dd className="mt-1 truncate text-sm font-bold">{value}</dd></div>; }
+function Metric({ icon, label, value, detail, onClick }: { icon: React.ReactNode; label: string; value: string; detail: string; onClick: () => void }) { return <button className="motion-card rounded-xl bg-white p-4 text-left demo-card" onClick={onClick}><div className="flex items-center justify-between text-[#F5A623]"><span className="[&>svg]:h-[18px] [&>svg]:w-[18px]">{icon}</span><strong className="text-2xl text-[#1C1C1C]">{value}</strong></div><div className="mt-3 text-sm font-bold">{label}</div><div className="text-xs text-[#6F6F6F]">{detail}</div></button>; }
+function Panel({ title, action, onAction, children }: { title: string; action?: string; onAction?: () => void; children: React.ReactNode }) { return <section className="rounded-xl bg-white p-5 demo-card"><div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-lg font-bold">{title}</h2>{action && <button className="secondary-button" onClick={onAction}>{action}</button>}</div>{children}</section>; }
+function Quick({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) { return <button className="motion-button flex items-center justify-between rounded-xl bg-white p-4 text-left text-sm font-bold demo-card" onClick={onClick}><span className="flex items-center gap-2 text-[#1C1C1C]"><span className="text-[#F5A623] [&>svg]:h-4 [&>svg]:w-4">{icon}</span>{label}</span><ChevronRight size={14} /></button>; }

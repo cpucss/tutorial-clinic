@@ -5,22 +5,21 @@ This document explains what is still missing to make the website work properly a
 ## Current Status
 
 - The app is a Vite + React front end.
-- Navigation is controlled by local React state in `src/app/App.tsx`, not by real URL routes.
+- Navigation uses shareable hash routes, centrally mapped in `src/app/routes.ts`, so the static front end does not depend on server rewrite rules.
 - Most app data comes from `src/mock/index.ts`.
-- `src/features/auth/pages/LoginPage.tsx` now has a mock login/register UI with demo student and admin shortcuts.
+- `src/features/auth/pages/LoginPage.tsx` has a mock login/register UI with demo student and admin shortcuts, and the selected demo session persists locally across refreshes.
 - There is no real authentication, backend API, database, file storage, or server-side protected admin access yet.
-- Student and admin navigation is role-aware in the front-end mock, but it still needs backend-backed route guards.
+- Student and admin navigation is role-aware in the front-end mock. URL guards prevent accidental admin rendering, but secure authorization still requires a backend.
 
 ## Priority Roadmap
 
 1. Connect the mock login and registration flow to a real backend.
-2. Add real routing so each page has its own URL.
-3. Add authentication and role-based access.
-4. Replace mock data with backend API calls.
-5. Add a database for users, events, attendance, notes, points, and notifications.
-6. Add file storage for uploaded notes.
-7. Improve mobile responsiveness and accessibility.
-8. Add admin-only workflows for approvals, attendance, sessions, students, and subjects.
+2. Replace mock authentication and front-end role guards with secure server sessions and authorization.
+3. Replace mock data with backend API calls.
+4. Add a database for users, events, attendance, notes, points, and notifications.
+5. Add file storage for uploaded notes.
+6. Add automated interaction and accessibility tests.
+7. Add server-backed reporting and audit history for admin workflows.
 
 ## Login And Authentication
 
@@ -81,7 +80,7 @@ Rules:
 
 ## Routing
 
-The app currently uses a `tab` state in `App.tsx`. For a real website, use routes.
+The app uses `HashRouter` and the central route map in `src/app/routes.ts`. Hash routes are intentional for a front-end-only static deployment. A backend deployment can switch to clean browser-history routes once the host is configured with SPA fallbacks.
 
 Suggested routes:
 
@@ -511,20 +510,17 @@ Missing or recommended additions:
 
 ## Suggested Implementation Order
 
-1. Create `LoginPage` and `RegisterPage`.
-2. Install and configure React Router routes.
-3. Add an auth context or auth store.
-4. Hide sidebar until the user is logged in.
-5. Hide admin nav unless `currentUser.role === "admin"`.
-6. Build backend auth endpoints.
-7. Add database schema and migrations.
-8. Replace `src/mock/index.ts` reads with API service functions.
-9. Implement events and RSVP persistence.
-10. Implement notes upload, storage, and approval.
-11. Implement attendance QR check-in.
-12. Implement points transactions and leaderboard.
-13. Implement notifications.
-14. Add tests for auth, API services, and important workflows.
+1. Build backend auth endpoints.
+2. Replace the local demo session with an auth context backed by the server.
+3. Enforce role permissions on every protected backend endpoint.
+4. Add database schema and migrations.
+5. Replace `src/mock/index.ts` reads with API service functions.
+6. Implement events and RSVP persistence.
+7. Implement notes upload, storage, and approval.
+8. Implement attendance QR check-in.
+9. Implement points transactions and leaderboard.
+10. Implement notifications.
+11. Add tests for auth, API services, and important workflows.
 
 ## Minimum Version For A Working Demo
 

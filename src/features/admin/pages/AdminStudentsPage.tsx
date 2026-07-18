@@ -1,147 +1,19 @@
-import { useState } from "react";
-import { Download, Search, UserPlus } from "lucide-react";
-
-import { currentUser, leaderboard, notes } from "../../../mock";
-import { ConfirmDialog } from "../../../components/common/Feedback";
+import { useMemo, useState } from "react";
+import { Download, Eye, Pencil, Plus, Search, X } from "lucide-react";
+import { ConfirmDialog, EmptyState, InlineNotice, StatusBadge } from "../../../components/common/Feedback";
 import type { ToastMessage } from "../../../components/common/Feedback";
-
-const seedStudents = leaderboard.map((student, index) => ({
-  ...student,
-  studentId: student.name === currentUser.name ? currentUser.studentId : `2024-${String(410 + index).padStart(5, "0")}`,
-  email: `${student.name.toLowerCase().replace(/\s+/g, ".")}@school.edu`,
-  uploads: notes.filter((note) => note.uploader === student.name).length,
-  attendance: 62 + ((index * 7) % 34),
-}));
+import { getUserPoints, useAppData } from "../../../context/AppDataContext";
+import type { DemoUser } from "../../../types/app";
+import type { YearLevel } from "../../../types/common";
+import { downloadCsv, formatDateTime } from "../../../utils/format";
 
 export function AdminStudentsPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage, "id">) => void }) {
-  const [students, setStudents] = useState(seedStudents);
-  const [removeTarget, setRemoveTarget] = useState<(typeof seedStudents)[number] | null>(null);
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
-        <div className="flex flex-col items-start justify-between gap-4 lg:flex-row">
-          <div>
-            <div style={{ fontSize: 12, color: "#6F6F6F" }}>Student management</div>
-            <h1 className="mt-1" style={{ fontSize: 34, fontWeight: 700, color: "#1C1C1C", lineHeight: 1.2 }}>
-              Students and points
-            </h1>
-            <p className="mt-2" style={{ fontSize: 14, color: "#6F6F6F", lineHeight: 1.65 }}>
-              Review profiles, point totals, attendance activity, and approved note contributions.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button className="motion-button flex items-center gap-1.5 rounded-full px-4 py-2" style={{ background: "#F8F8F8", color: "#1C1C1C", fontSize: 13, fontWeight: 500 }}>
-              <Download size={14} /> Export
-            </button>
-            <button
-              className="motion-button flex items-center gap-1.5 rounded-full px-4 py-2"
-              style={{ background: "#F5A623", color: "#FFFFFF", fontSize: 13, fontWeight: 500 }}
-              onClick={() => onNotify?.({ tone: "info", title: "Add student form", description: "Connect this action to registration or CSV import." })}
-            >
-              <UserPlus size={14} /> Add Student
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <Stat label="Students" value={students.length} />
-          <Stat label="Avg attendance" value={`${Math.round(students.reduce((sum, s) => sum + s.attendance, 0) / students.length)}%`} />
-          <Stat label="Total points" value={students.reduce((sum, s) => sum + s.points, 0)} />
-          <Stat label="Note uploads" value={students.reduce((sum, s) => sum + s.uploads, 0)} />
-        </div>
-
-        <div className="mt-5 rounded-xl overflow-hidden" style={{ background: "#FFFFFF", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-          <div className="p-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-            <h2 style={{ fontSize: 19, fontWeight: 700, color: "#1C1C1C" }}>Student roster</h2>
-            <div className="relative w-full sm:w-[280px]">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" color="#6F6F6F" />
-              <input placeholder="Search student" className="h-9 w-full rounded-full bg-white pl-8 pr-3 outline-none" style={{ fontSize: 13, color: "#1C1C1C", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }} />
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px]">
-              <thead style={{ background: "#FAF8F2" }}>
-                <tr>
-                  {["Student", "Year", "Attendance", "Uploads", "Points", ""].map((heading) => (
-                    <th key={heading} className="px-5 py-3 text-left" style={{ fontSize: 12, color: "#6F6F6F", fontWeight: 500 }}>{heading}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {students.map((student) => (
-                  <tr key={student.id} style={{ borderTop: "1px solid #F0EFE9" }}>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <span className="h-9 w-9 rounded-full flex items-center justify-center" style={{ background: "#FAF8F2", color: "#1C1C1C", fontSize: 13, fontWeight: 700 }}>
-                          {student.name[0]}
-                        </span>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1C" }}>{student.name}</div>
-                          <div style={{ fontSize: 12, color: "#6F6F6F" }}>{student.studentId} - {student.email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3" style={{ fontSize: 13, color: "#1C1C1C" }}>{student.yearLevel}</td>
-                    <td className="px-5 py-3">
-                      <div className="w-[120px] h-2 rounded-full overflow-hidden" style={{ background: "#F0EFE9" }}>
-                        <div className="h-full rounded-full" style={{ width: `${student.attendance}%`, background: "#F5A623" }} />
-                      </div>
-                    </td>
-                    <td className="px-5 py-3" style={{ fontSize: 13, color: "#6F6F6F" }}>{student.uploads}</td>
-                    <td className="px-5 py-3" style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1C" }}>{student.points}</td>
-                    <td className="px-5 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          className="motion-button rounded-full px-3 py-1"
-                          style={{ background: "#F8F8F8", color: "#1C1C1C", fontSize: 12, fontWeight: 500 }}
-                          onClick={() => onNotify?.({ tone: "success", title: "Point adjustment opened", description: `${student.name} is ready for admin review.` })}
-                        >
-                          Adjust Points
-                        </button>
-                        <button
-                          className="motion-button rounded-full px-3 py-1"
-                          style={{ background: "#FFF1F1", color: "#6E1C1C", fontSize: 12, fontWeight: 700 }}
-                          onClick={() => setRemoveTarget(student)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <ConfirmDialog
-        open={Boolean(removeTarget)}
-        title="Remove this student?"
-        body={`${removeTarget?.name ?? "This student"} will be removed from the visible roster. A real backend should archive the account instead of deleting records.`}
-        confirmLabel="Remove student"
-        cancelLabel="Keep student"
-        tone="error"
-        onCancel={() => setRemoveTarget(null)}
-        onConfirm={() => {
-          if (removeTarget) {
-            setStudents((items) => items.filter((student) => student.id !== removeTarget.id));
-            onNotify?.({ tone: "warning", title: "Student removed", description: `${removeTarget.name} left the local roster.` });
-          }
-          setRemoveTarget(null);
-        }}
-      />
-    </div>
-  );
+  const { state, saveUser } = useAppData(); const [query, setQuery] = useState(""); const [year, setYear] = useState("All"); const [access, setAccess] = useState("Active"); const [editor, setEditor] = useState<DemoUser | "new" | null>(null); const [profile, setProfile] = useState<DemoUser | null>(null); const [pointsUser, setPointsUser] = useState<DemoUser | null>(null); const [deactivate, setDeactivate] = useState<DemoUser | null>(null);
+  const students = useMemo(() => state.users.filter((user) => user.role !== "admin" && (!query || `${user.name} ${user.studentId} ${user.email}`.toLowerCase().includes(query.toLowerCase())) && (year === "All" || user.yearLevel === year) && (access === "All" || (access === "Active" ? user.active : !user.active))).sort((a, b) => a.name.localeCompare(b.name)), [access, query, state.users, year]);
+  function exportRows() { downloadCsv("tutorial-clinic-students.csv", students.map((user) => ({ student_id: user.studentId, name: user.name, year: user.yearLevel, section: user.section, email: user.email, role: user.role, active: user.active, points: getUserPoints(state, user.id), attendance_records: state.attendance.filter((item) => item.userId === user.id).length, note_uploads: state.notes.filter((item) => item.uploaderId === user.id).length }))); onNotify?.({ tone: "success", title: "Student CSV exported", description: `${students.length} visible students were included.` }); }
+  return <div className="h-full overflow-y-auto"><div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8"><header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><div className="section-kicker">Student management</div><h1 className="page-heading">Students and points</h1><p className="page-description">Manage student profiles, roles, access, and transparent point adjustments.</p></div><div className="flex gap-2"><button className="secondary-button" onClick={exportRows}><Download size={15} /> Export CSV</button><button className="primary-button" onClick={() => setEditor("new")}><Plus size={15} /> Add student</button></div></header><section className="mt-6 grid gap-3 rounded-xl bg-white p-4 demo-card md:grid-cols-[1fr_180px_180px]"><label className="search-field"><Search size={15} /><span className="sr-only">Search students</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search student, ID, or email" /></label><Filter label="Year" value={year} onChange={setYear} options={["All", "Freshman", "Sophomore", "Junior", "Senior"]} /><Filter label="Access" value={access} onChange={setAccess} options={["All", "Active", "Inactive"]} /></section><section className="mt-5 overflow-hidden rounded-xl bg-white demo-card"><div className="table-scroll"><table className="data-table"><thead><tr><th>Student</th><th>Year and section</th><th>Attendance</th><th>Notes</th><th>Points</th><th>Actions</th></tr></thead><tbody>{students.map((user) => { const attendance = state.attendance.filter((item) => item.userId === user.id); const approved = attendance.filter((item) => item.status === "Approved").length; const rate = attendance.length ? Math.round((approved / attendance.length) * 100) : 0; return <tr key={user.id}><td><strong>{user.name}</strong><small>{user.studentId} - {user.email}</small>{!user.active && <StatusBadge status="Inactive" />}</td><td>{user.yearLevel}<small>{user.section}</small></td><td>{rate}%<small>{approved}/{attendance.length} approved</small></td><td>{state.notes.filter((item) => item.uploaderId === user.id).length}</td><td><strong>{getUserPoints(state, user.id)}</strong></td><td><div className="table-actions"><button onClick={() => setProfile(user)}><Eye size={14} /> View</button><button onClick={() => setEditor(user)}><Pencil size={14} /> Edit</button><button onClick={() => setPointsUser(user)}>Adjust points</button>{user.active && <button className="danger-text" onClick={() => setDeactivate(user)}>Deactivate</button>}</div></td></tr>; })}</tbody></table></div>{!students.length && <div className="p-5"><EmptyState title="No students found" body="Change the search or student filters." /></div>}</section></div>{editor && <StudentEditor user={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onNotify={onNotify} />}{profile && <StudentProfile user={profile} onClose={() => setProfile(null)} onAdjust={() => { setProfile(null); setPointsUser(profile); }} />}{pointsUser && <PointAdjuster user={pointsUser} onClose={() => setPointsUser(null)} onNotify={onNotify} />}<ConfirmDialog open={Boolean(deactivate)} title="Deactivate this student?" body={`${deactivate?.name ?? "This student"} will no longer be able to sign in, but their records remain available for reporting.`} confirmLabel="Deactivate student" cancelLabel="Keep active" tone="error" onCancel={() => setDeactivate(null)} onConfirm={() => { if (deactivate) { saveUser({ ...deactivate, active: false }); onNotify?.({ tone: "warning", title: "Student deactivated", description: `${deactivate.name}'s account access was disabled.` }); } setDeactivate(null); }} /></div>;
 }
-
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-xl p-4" style={{ background: "#FFFFFF", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-      <div style={{ fontSize: 12, color: "#6F6F6F" }}>{label}</div>
-      <div className="mt-2" style={{ fontSize: 28, fontWeight: 700, color: "#1C1C1C", lineHeight: 1 }}>{value}</div>
-    </div>
-  );
-}
+function Filter({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[] }) { return <label className="compact-field"><span>{label}</span><select value={value} onChange={(e) => onChange(e.target.value)}>{options.map((item) => <option key={item}>{item}</option>)}</select></label>; }
+function StudentEditor({ user, onClose, onNotify }: { user?: DemoUser; onClose: () => void; onNotify?: (toast: Omit<ToastMessage, "id">) => void }) { const { state, saveUser } = useAppData(); const [name, setName] = useState(user?.name ?? ""); const [studentId, setStudentId] = useState(user?.studentId ?? ""); const [email, setEmail] = useState(user?.email ?? ""); const [yearLevel, setYearLevel] = useState<YearLevel>(user?.yearLevel ?? "Freshman"); const [section, setSection] = useState(user?.section ?? "CS-1A"); const [program, setProgram] = useState(user?.program ?? "BS Computer Science"); const [role, setRole] = useState<"student" | "contributor">(user?.role === "contributor" ? "contributor" : "student"); const [active, setActive] = useState(user?.active ?? true); const [error, setError] = useState(""); function submit() { const normalized = studentId.trim().toUpperCase(); if (!name.trim() || !/^[0-9]{4}-[0-9]{5}$/.test(normalized) || !/^\S+@\S+\.\S+$/.test(email)) { setError("Enter a name, a valid Student ID, and a valid email."); return; } if (state.users.some((item) => item.id !== user?.id && item.studentId.toUpperCase() === normalized)) { setError("That Student ID already exists."); return; } saveUser({ id: user?.id ?? `stu-${Date.now()}`, name: name.trim(), studentId: normalized, email: email.trim(), yearLevel, section: section.trim(), program: program.trim(), role, active, accountSetup: user?.accountSetup ?? { completed: false } }); onNotify?.({ tone: "success", title: user ? "Student updated" : "Student added", description: `${name.trim()}'s profile is ready in the student records.` }); onClose(); } return <div className="confirm-overlay" onMouseDown={onClose}><div className="entity-editor-dialog" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}><header><div><div className="section-kicker">{user ? "Edit student" : "New student"}</div><h2>{user?.name ?? "Add student"}</h2></div><button className="icon-button rounded-full bg-[#FAF8F2]" onClick={onClose}><X size={16} /></button></header>{error && <InlineNotice tone="error" title="Student not saved">{error}</InlineNotice>}<div className="entity-form-grid"><label className="form-field"><span>Full name</span><input value={name} onChange={(e) => setName(e.target.value)} /></label><label className="form-field"><span>Student ID</span><input value={studentId} onChange={(e) => setStudentId(e.target.value.toUpperCase())} placeholder="2026-00001" /></label><label className="form-field"><span>School email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label><label className="form-field"><span>Year level</span><select value={yearLevel} onChange={(e) => setYearLevel(e.target.value as YearLevel)}>{["Freshman", "Sophomore", "Junior", "Senior"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="form-field"><span>Section</span><input value={section} onChange={(e) => setSection(e.target.value)} /></label><label className="form-field"><span>Program</span><input value={program} onChange={(e) => setProgram(e.target.value)} /></label><label className="form-field"><span>Role</span><select value={role} onChange={(e) => setRole(e.target.value as "student" | "contributor")}><option value="student">Student</option><option value="contributor">Contributor</option></select></label><label className="check-chip self-end"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />Active account</label></div><footer><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={submit}>Save student</button></footer></div></div>; }
+function StudentProfile({ user, onClose, onAdjust }: { user: DemoUser; onClose: () => void; onAdjust: () => void }) { const { state } = useAppData(); const transactions = state.points.filter((item) => item.userId === user.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); return <div className="confirm-overlay" onMouseDown={onClose}><div className="entity-detail-dialog" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}><header><div><div className="section-kicker">Student profile</div><h2>{user.name}</h2><p>{user.studentId}</p></div><button className="icon-button rounded-full bg-[#FAF8F2]" onClick={onClose}><X size={16} /></button></header><dl className="detail-list"><div><dt>Email</dt><dd>{user.email}</dd></div><div><dt>Program</dt><dd>{user.program}</dd></div><div><dt>Year and section</dt><dd>{user.yearLevel} - {user.section}</dd></div><div><dt>Role</dt><dd>{user.role}</dd></div><div><dt>Points</dt><dd>{getUserPoints(state, user.id)}</dd></div><div><dt>Account setup</dt><dd>{user.accountSetup.completed ? "Completed" : "Pending first login"}</dd></div></dl><h3 className="mt-5 font-bold">Recent point history</h3><ul className="mt-2 grid gap-2">{transactions.slice(0, 5).map((item) => <li className="history-row" key={item.id}><span>{item.reason}<small>{formatDateTime(item.createdAt)}</small></span><strong>{item.points > 0 ? "+" : ""}{item.points}</strong></li>)}</ul><footer><button className="secondary-button" onClick={onClose}>Close</button><button className="primary-button" onClick={onAdjust}>Adjust points</button></footer></div></div>; }
+function PointAdjuster({ user, onClose, onNotify }: { user: DemoUser; onClose: () => void; onNotify?: (toast: Omit<ToastMessage, "id">) => void }) { const { state, adjustPoints } = useAppData(); const [points, setPoints] = useState(0); const [reason, setReason] = useState(""); const [error, setError] = useState(""); const transactions = state.points.filter((item) => item.userId === user.id && item.relatedType === "Adjustment").sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); function save() { const result = adjustPoints(user.id, points, reason); if (!result.ok) { setError(result.message); return; } onNotify?.({ tone: "success", title: "Points adjusted", description: `${points > 0 ? "+" : ""}${points} points were recorded for ${user.name}.` }); onClose(); } return <div className="confirm-overlay" onMouseDown={onClose}><div className="entity-detail-dialog" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}><header><div><div className="section-kicker">Point adjustment</div><h2>{user.name}</h2><p>Current balance: {getUserPoints(state, user.id)}</p></div><button className="icon-button rounded-full bg-[#FAF8F2]" onClick={onClose}><X size={16} /></button></header>{error && <InlineNotice tone="error" title="Adjustment not saved">{error}</InlineNotice>}<div className="entity-form-grid mt-5"><label className="form-field"><span>Points (use a negative value to deduct)</span><input type="number" value={points} onChange={(e) => setPoints(Number(e.target.value))} /></label><label className="form-field md:col-span-2"><span>Reason</span><textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></label></div>{transactions.length > 0 && <><h3 className="mt-5 font-bold">Adjustment history</h3><ul className="mt-2 grid gap-2">{transactions.slice(0, 4).map((item) => <li className="history-row" key={item.id}><span>{item.reason}<small>{formatDateTime(item.createdAt)}</small></span><strong>{item.points > 0 ? "+" : ""}{item.points}</strong></li>)}</ul></>}<footer><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={save}>Record adjustment</button></footer></div></div>; }

@@ -5,6 +5,7 @@ import {
   Loader2,
   X,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type React from "react";
 
 export type ToastTone = "success" | "error" | "info" | "warning";
@@ -50,6 +51,7 @@ export function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   const palette =
     normalized.includes("approved") ||
+    normalized.includes("confirmed") ||
     normalized.includes("present") ||
     normalized.includes("enabled") ||
     normalized.includes("upcoming") ||
@@ -166,6 +168,23 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const dialog = dialogRef.current;
+    const controls = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+    controls()[0]?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); onCancel(); return; }
+      if (event.key !== "Tab") return;
+      const items = controls();
+      const first = items[0]; const last = items.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onCancel, open]);
   if (!open) return null;
 
   const isDanger = tone === "error" || tone === "warning";
@@ -173,6 +192,7 @@ export function ConfirmDialog({
   return (
     <div className="confirm-overlay" role="presentation" onMouseDown={onCancel}>
       <div
+        ref={dialogRef}
         className="confirm-dialog"
         role="dialog"
         aria-modal="true"

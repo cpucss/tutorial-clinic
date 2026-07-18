@@ -1,226 +1,24 @@
-import { useState } from "react";
-import { CalendarPlus, Search, SlidersHorizontal } from "lucide-react";
-
-import { events } from "../../../mock";
-import { ConfirmDialog, InlineNotice, StatusBadge } from "../../../components/common/Feedback";
+import { useMemo, useState } from "react";
+import { CalendarPlus, Download, Eye, Pencil, Search, Trash2, X } from "lucide-react";
+import { ConfirmDialog, EmptyState, InlineNotice, StatusBadge } from "../../../components/common/Feedback";
 import type { ToastMessage } from "../../../components/common/Feedback";
-
-const subjects = ["All subjects", "CS101", "CS150", "CS220", "CS301", "CS401"];
+import { effectiveEventStatus, getRsvpCount, useAppData } from "../../../context/AppDataContext";
+import type { DemoEvent, SessionStatus } from "../../../types/app";
+import type { YearLevel } from "../../../types/common";
+import { downloadCsv, formatDateTime } from "../../../utils/format";
 
 export function AdminSessionsPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage, "id">) => void }) {
-  const [showForm, setShowForm] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<(typeof events)[number] | null>(null);
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
-        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
-          <div>
-            <div style={{ fontSize: 12, color: "#6F6F6F" }}>Session management</div>
-            <h1 className="mt-1" style={{ fontSize: 34, fontWeight: 700, color: "#1C1C1C", lineHeight: 1.2 }}>
-              Tutorial sessions
-            </h1>
-            <p className="mt-2" style={{ fontSize: 14, color: "#6F6F6F", lineHeight: 1.65 }}>
-              Create sessions, update details, and control attendance availability.
-            </p>
-          </div>
-          <button onClick={() => setShowForm(true)} className="flex items-center gap-1.5 rounded-full px-4 py-2" style={{ background: "#F5A623", color: "#FFFFFF", fontSize: 13, fontWeight: 500 }}>
-            <CalendarPlus size={14} /> Create Session
-          </button>
-        </div>
-
-        <div className="mt-6 rounded-xl overflow-hidden" style={{ background: "#FFFFFF", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-          <div className="p-5 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" color="#6F6F6F" />
-              <input placeholder="Search sessions" className="h-9 w-full rounded-full bg-white pl-8 pr-3 outline-none" style={{ fontSize: 13, color: "#1C1C1C", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }} />
-            </div>
-            <div className="relative">
-              <SlidersHorizontal size={14} className="absolute left-3 top-1/2 -translate-y-1/2" color="#6F6F6F" />
-              <select className="h-9 rounded-full bg-white pl-8 pr-8 outline-none" style={{ fontSize: 13, color: "#1C1C1C", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-                {subjects.map((subject) => <option key={subject}>{subject}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px]">
-              <thead style={{ background: "#FAF8F2" }}>
-                <tr>
-                  {["Title", "Subject", "Date", "Time", "Venue", "Attendance", ""].map((heading) => (
-                    <th key={heading} className="px-5 py-3 text-left" style={{ fontSize: 12, color: "#6F6F6F", fontWeight: 500 }}>{heading}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((event, index) => {
-                  const date = new Date(event.date);
-                  const enabled = index !== 1;
-                  return (
-                    <tr key={event.id} style={{ borderTop: "1px solid #F0EFE9" }}>
-                      <td className="px-5 py-3">
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1C1C1C" }}>{event.title}</div>
-                        <div style={{ fontSize: 12, color: "#6F6F6F" }}>{event.speaker}</div>
-                      </td>
-                      <td className="px-5 py-3" style={{ fontSize: 13, color: "#1C1C1C" }}>{event.topics[0]}</td>
-                      <td className="px-5 py-3" style={{ fontSize: 13, color: "#6F6F6F" }}>{date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</td>
-                      <td className="px-5 py-3" style={{ fontSize: 13, color: "#1C1C1C" }}>{date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</td>
-                      <td className="px-5 py-3" style={{ fontSize: 13, color: "#6F6F6F" }}>{event.venue}</td>
-                      <td className="px-5 py-3">
-                        <StatusBadge status={enabled ? "Enabled" : "Disabled"} />
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="flex justify-end gap-2">
-                          <RowButton label="Edit Session" onClick={() => setShowForm(true)} />
-                          <RowButton label="Delete Session" onClick={() => setDeleteTarget(event)} />
-                          <RowButton label={enabled ? "Disable Attendance" : "Enable Attendance"} primary={!enabled} />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {showForm && (
-        <SessionFormModal
-          onClose={() => setShowForm(false)}
-          onNotify={onNotify}
-        />
-      )}
-
-      <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        title="Delete this session?"
-        body={`"${deleteTarget?.title ?? "This session"}" will be removed from the admin schedule view. Connect this action to the backend before production.`}
-        confirmLabel="Delete session"
-        cancelLabel="Keep session"
-        tone="error"
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={() => {
-          onNotify?.({
-            tone: "warning",
-            title: "Session delete queued",
-            description: deleteTarget ? `${deleteTarget.title} would be deleted by the backend.` : "The delete action was confirmed.",
-          });
-          setDeleteTarget(null);
-        }}
-      />
-    </div>
-  );
+  const { state, deleteEvent } = useAppData(); const [query, setQuery] = useState(""); const [subjectId, setSubjectId] = useState("All"); const [status, setStatus] = useState("All"); const [instructor, setInstructor] = useState("All"); const [dateFilter, setDateFilter] = useState(""); const [editor, setEditor] = useState<DemoEvent | "new" | null>(null); const [view, setView] = useState<DemoEvent | null>(null); const [remove, setRemove] = useState<DemoEvent | null>(null);
+  const instructors = Array.from(new Set(state.events.map((event) => event.instructor))).sort();
+  const events = useMemo(() => state.events.filter((event) => (!query || `${event.title} ${event.description} ${event.venue}`.toLowerCase().includes(query.toLowerCase())) && (subjectId === "All" || event.subjectId === subjectId) && (status === "All" || effectiveEventStatus(event) === status) && (instructor === "All" || event.instructor === instructor) && (!dateFilter || event.date.slice(0, 10) === dateFilter)).sort((a, b) => +new Date(a.date) - +new Date(b.date)), [dateFilter, instructor, query, state.events, status, subjectId]);
+  function exportRows() { downloadCsv("tutorial-clinic-sessions.csv", events.map((event) => ({ title: event.title, subject: state.subjects.find((item) => item.id === event.subjectId)?.code, start: formatDateTime(event.date), venue: event.venue, instructor: event.instructor, status: effectiveEventStatus(event), rsvps: getRsvpCount(state, event.id), capacity: event.capacity, attendance_code: event.attendanceCode }))); onNotify?.({ tone: "success", title: "Session CSV exported", description: `${events.length} visible sessions were included.` }); }
+  return <div className="h-full overflow-y-auto"><div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8"><header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><div className="section-kicker">Session management</div><h1 className="page-heading">Tutorial sessions</h1><p className="page-description">Create, edit, search, filter, and export sessions used across the student workspace.</p></div><div className="flex gap-2"><button className="secondary-button" onClick={exportRows}><Download size={15} /> Export CSV</button><button className="primary-button" onClick={() => setEditor("new")}><CalendarPlus size={15} /> Create session</button></div></header><section className="mt-6 grid gap-3 rounded-xl bg-white p-4 demo-card md:grid-cols-2 xl:grid-cols-[1fr_180px_150px_180px_160px]"><label className="search-field"><Search size={15} /><span className="sr-only">Search sessions</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" /></label><Filter label="Subject" value={subjectId} onChange={setSubjectId}><option value="All">All subjects</option>{state.subjects.map((item) => <option key={item.id} value={item.id}>{item.code}</option>)}</Filter><Filter label="Status" value={status} onChange={setStatus}>{["All", "Upcoming", "Live", "Completed", "Cancelled", "Draft"].map((item) => <option key={item}>{item}</option>)}</Filter><Filter label="Instructor" value={instructor} onChange={setInstructor}><option>All</option>{instructors.map((item) => <option key={item}>{item}</option>)}</Filter><label className="compact-field"><span>Date</span><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} /></label></section><section className="mt-5 overflow-hidden rounded-xl bg-white demo-card"><div className="table-scroll"><table className="data-table"><thead><tr><th>Session</th><th>Date</th><th>Instructor</th><th>RSVP</th><th>Status</th><th>Actions</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td><strong>{event.title}</strong><small>{state.subjects.find((item) => item.id === event.subjectId)?.code} - {event.venue}</small></td><td>{formatDateTime(event.date)}</td><td>{event.instructor}</td><td>{getRsvpCount(state, event.id)}/{event.capacity}</td><td><StatusBadge status={effectiveEventStatus(event)} /></td><td><div className="table-actions"><button onClick={() => setView(event)}><Eye size={14} /> View</button><button onClick={() => setEditor(event)}><Pencil size={14} /> Edit</button><button className="danger-text" onClick={() => setRemove(event)}><Trash2 size={14} /> Delete</button></div></td></tr>)}</tbody></table></div>{!events.length && <div className="p-5"><EmptyState title="No sessions found" body="Change a filter or create a new session." /></div>}</section></div>{editor && <SessionEditor event={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onNotify={onNotify} />}{view && <SessionDetails event={view} onClose={() => setView(null)} />}<ConfirmDialog open={Boolean(remove)} title="Delete this session?" body={`${remove?.title ?? "This session"} and its RSVP and attendance records will be removed.`} confirmLabel="Delete session" cancelLabel="Keep session" tone="error" onCancel={() => setRemove(null)} onConfirm={() => { if (remove) { deleteEvent(remove.id); onNotify?.({ tone: "warning", title: "Session deleted", description: `${remove.title} was removed from all session views.` }); } setRemove(null); }} /></div>;
 }
 
-function RowButton({ label, primary = false, onClick }: { label: string; primary?: boolean; onClick?: () => void }) {
-  return (
-    <button onClick={onClick} className="rounded-full px-3 py-1" style={{ background: primary ? "#F5A623" : "#F8F8F8", color: primary ? "#FFFFFF" : "#1C1C1C", fontSize: 12, fontWeight: 500 }}>
-      {label}
-    </button>
-  );
+function Filter({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) { return <label className="compact-field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{children}</select></label>; }
+function SessionEditor({ event, onClose, onNotify }: { event?: DemoEvent; onClose: () => void; onNotify?: (toast: Omit<ToastMessage, "id">) => void }) {
+  const { state, saveEvent } = useAppData(); const local = (iso?: string) => iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ""; const [title, setTitle] = useState(event?.title ?? ""); const [subjectId, setSubjectId] = useState(event?.subjectId ?? state.subjects[0]?.id ?? ""); const [description, setDescription] = useState(event?.description ?? ""); const [date, setDate] = useState(local(event?.date)); const [endDate, setEndDate] = useState(local(event?.endDate)); const [venue, setVenue] = useState(event?.venue ?? ""); const [instructor, setInstructor] = useState(event?.instructor ?? ""); const [capacity, setCapacity] = useState(event?.capacity ?? 25); const [status, setStatus] = useState<SessionStatus>(event?.status ?? "Upcoming"); const [code, setCode] = useState(event?.attendanceCode ?? ""); const [topics, setTopics] = useState(event?.topics.join(", ") ?? ""); const [yearLevels, setYearLevels] = useState<YearLevel[]>(event?.yearLevels ?? ["Freshman", "Sophomore", "Junior", "Senior"]); const [error, setError] = useState("");
+  function submit() { const result = saveEvent({ ...event, title, subjectId, description, date: date ? new Date(date).toISOString() : "", endDate: endDate ? new Date(endDate).toISOString() : "", venue, instructor, capacity, status, attendanceCode: code, topics: topics.split(",").map((item) => item.trim()).filter(Boolean), yearLevels }); if (!result.ok) { setError(result.message); return; } onNotify?.({ tone: "success", title: event ? "Session updated" : "Session created", description: `${title} is now synchronized across admin and student pages.` }); onClose(); }
+  return <div className="confirm-overlay" onMouseDown={onClose}><div className="entity-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="session-editor-title" onMouseDown={(e) => e.stopPropagation()}><header><div><div className="section-kicker">{event ? "Edit session" : "New session"}</div><h2 id="session-editor-title">{event ? event.title : "Create Tutorial Clinic session"}</h2></div><button className="icon-button rounded-full bg-[#FAF8F2]" onClick={onClose} aria-label="Close session editor"><X size={16} /></button></header>{error && <InlineNotice tone="error" title="Session not saved">{error}</InlineNotice>}<div className="entity-form-grid"><label className="form-field md:col-span-2"><span>Title</span><input value={title} onChange={(e) => setTitle(e.target.value)} /></label><label className="form-field"><span>Subject</span><select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>{state.subjects.map((item) => <option value={item.id} key={item.id}>{item.code} - {item.name}</option>)}</select></label><label className="form-field"><span>Status</span><select value={status} onChange={(e) => setStatus(e.target.value as SessionStatus)}>{["Draft", "Upcoming", "Live", "Completed", "Cancelled"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="form-field"><span>Start</span><input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} /></label><label className="form-field"><span>End</span><input type="datetime-local" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label><label className="form-field"><span>Venue</span><input value={venue} onChange={(e) => setVenue(e.target.value)} /></label><label className="form-field"><span>Instructor</span><input value={instructor} onChange={(e) => setInstructor(e.target.value)} /></label><label className="form-field"><span>Participant capacity</span><input type="number" min="1" value={capacity} onChange={(e) => setCapacity(Number(e.target.value))} /></label><label className="form-field"><span>Attendance code</span><input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="Generated if empty" /></label><label className="form-field md:col-span-2"><span>Topics (comma separated)</span><input value={topics} onChange={(e) => setTopics(e.target.value)} /></label><label className="form-field md:col-span-2"><span>Description</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} /></label><fieldset className="md:col-span-2"><legend>Eligible year levels</legend><div className="mt-2 flex flex-wrap gap-2">{(["Freshman", "Sophomore", "Junior", "Senior"] as YearLevel[]).map((year) => <label className="check-chip" key={year}><input type="checkbox" checked={yearLevels.includes(year)} onChange={() => setYearLevels((current) => current.includes(year) ? current.filter((item) => item !== year) : [...current, year])} />{year}</label>)}</div></fieldset></div><footer><button className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={submit}>{event ? "Save changes" : "Create session"}</button></footer></div></div>;
 }
-
-function SessionFormModal({
-  onClose,
-  onNotify,
-}: {
-  onClose: () => void;
-  onNotify?: (toast: Omit<ToastMessage, "id">) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [subject, setSubject] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
-  const [venue, setVenue] = useState("");
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState("");
-
-  function submit() {
-    if (!title.trim()) {
-      setError("Enter a session title.");
-      return;
-    }
-    if (!subject.trim()) {
-      setError("Enter a subject code.");
-      return;
-    }
-    if (!date.trim() || !time.trim()) {
-      setError("Add both date and time.");
-      return;
-    }
-    if (!venue.trim()) {
-      setError("Enter the room or online meeting location.");
-      return;
-    }
-
-    onNotify?.({
-      tone: "success",
-      title: "Session saved",
-      description: `${title.trim()} passed front-end validation.`,
-    });
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(28,28,28,0.36)" }}>
-      <div className="max-h-[calc(100dvh-2rem)] w-[min(560px,calc(100vw-2rem))] overflow-y-auto rounded-xl p-6" style={{ background: "#FFFFFF", boxShadow: "0 18px 60px rgba(0,0,0,0.18)" }}>
-        <div className="flex items-start justify-between">
-          <div>
-            <div style={{ fontSize: 12, color: "#6F6F6F" }}>Session form modal</div>
-            <h2 className="mt-1" style={{ fontSize: 26, fontWeight: 700, color: "#1C1C1C" }}>Create or edit session</h2>
-          </div>
-          <button onClick={onClose} className="rounded-full px-3 py-1" style={{ background: "#F8F8F8", color: "#1C1C1C", fontSize: 12, fontWeight: 500 }}>Close</button>
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {error && (
-            <div className="sm:col-span-2">
-              <InlineNotice tone="error" title="Session needs more detail">
-                {error}
-              </InlineNotice>
-            </div>
-          )}
-          <Field label="Title" placeholder="Database Design Clinic" value={title} onChange={setTitle} wide />
-          <Field label="Subject" placeholder="CS220" value={subject} onChange={setSubject} />
-          <Field label="Date" placeholder="2026-07-02" value={date} onChange={setDate} />
-          <Field label="Time" placeholder="2:00 PM" value={time} onChange={setTime} />
-          <Field label="Venue" placeholder="Room CS-110" value={venue} onChange={setVenue} />
-          <Field label="Description" placeholder="Topics and facilitator notes" value={description} onChange={setDescription} wide textarea />
-        </div>
-
-        <div className="mt-6 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-full px-5 py-2.5" style={{ background: "#F8F8F8", color: "#1C1C1C", fontSize: 13, fontWeight: 500 }}>Cancel</button>
-          <button onClick={submit} className="rounded-full px-5 py-2.5" style={{ background: "#F5A623", color: "#FFFFFF", fontSize: 13, fontWeight: 500 }}>Create Session</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  placeholder,
-  value,
-  onChange,
-  wide = false,
-  textarea = false,
-}: {
-  label: string;
-  placeholder: string;
-  value: string;
-  onChange: (value: string) => void;
-  wide?: boolean;
-  textarea?: boolean;
-}) {
-  return (
-    <label className={wide ? "sm:col-span-2" : ""}>
-      <div className="mb-1.5" style={{ fontSize: 12, color: "#6F6F6F", fontWeight: 500 }}>{label}</div>
-      {textarea ? (
-        <textarea value={value} onChange={(event) => onChange(event.target.value)} className="h-24 w-full resize-none rounded-md bg-white px-3 py-2 outline-none" placeholder={placeholder} style={{ border: "1px solid #F0EFE9", color: "#1C1C1C", fontSize: 13 }} />
-      ) : (
-        <input value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md bg-white px-3 outline-none" placeholder={placeholder} style={{ border: "1px solid #F0EFE9", color: "#1C1C1C", fontSize: 13 }} />
-      )}
-    </label>
-  );
-}
+function SessionDetails({ event, onClose }: { event: DemoEvent; onClose: () => void }) { const { state } = useAppData(); return <div className="confirm-overlay" onMouseDown={onClose}><div className="entity-detail-dialog" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}><header><div><div className="section-kicker">Session details</div><h2>{event.title}</h2></div><button className="icon-button rounded-full bg-[#FAF8F2]" onClick={onClose}><X size={16} /></button></header><p className="mt-4 text-sm leading-7 text-[#6F6F6F]">{event.description}</p><dl className="detail-list"><div><dt>Subject</dt><dd>{state.subjects.find((item) => item.id === event.subjectId)?.name}</dd></div><div><dt>Schedule</dt><dd>{formatDateTime(event.date)}</dd></div><div><dt>Instructor</dt><dd>{event.instructor}</dd></div><div><dt>Venue</dt><dd>{event.venue}</dd></div><div><dt>RSVP</dt><dd>{getRsvpCount(state, event.id)}/{event.capacity}</dd></div><div><dt>Attendance code</dt><dd>{event.attendanceCode}</dd></div></dl><footer><button className="primary-button" onClick={onClose}>Done</button></footer></div></div>; }
