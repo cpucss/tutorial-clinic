@@ -143,19 +143,22 @@ async function assertPanelFits(page, selector, label) {
 async function assertMobileDock(page) {
   const dock = page.locator(".mobile-nav-bar");
   const buttons = dock.locator(":scope > button");
-  if (await buttons.count() !== 5) throw new Error("Mobile navigation must contain four primary actions and one center More action.");
-  const more = page.getByRole("button", { name: "More", exact: true });
-  const [dockBox, moreBox] = await Promise.all([dock.boundingBox(), more.boundingBox()]);
-  if (!dockBox || !moreBox) throw new Error("Mobile navigation measurements are unavailable.");
-  const dockCenter = dockBox.x + dockBox.width / 2;
-  const moreCenter = moreBox.x + moreBox.width / 2;
-  if (Math.abs(dockCenter - moreCenter) > 2) throw new Error(`More is not centered in the mobile dock: ${moreCenter}px / ${dockCenter}px.`);
+  if (await buttons.count() !== 2) throw new Error("Mobile navigation must contain only QR mode and the navigation hub.");
+  const labels = await buttons.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label")));
+  if (!labels.includes("Scan / QR") || !labels.includes("More")) throw new Error(`Unexpected mobile navigation actions: ${labels.join(", ")}.`);
 }
 
 async function auditInteractions(page, baseUrl, viewportName) {
   await page.goto(`${baseUrl}/#/dashboard`, { waitUntil: "networkidle" });
   await page.waitForTimeout(550);
   await assertMobileDock(page);
+  await page.getByRole("button", { name: "Scan / QR" }).click();
+  await page.locator(".qr-mode-dialog").waitFor();
+  await assertPanelFits(page, ".qr-mode-dialog", "QR mode dialog");
+  await page.getByRole("tab", { name: "Generate QR" }).click();
+  await page.locator(".qr-mode-code-panel svg").waitFor();
+  await page.screenshot({ path: path.join(outputDirectory, `${viewportName}-qr-mode.png`) });
+  await page.getByRole("button", { name: "Close QR mode" }).click();
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.locator(".mobile-more-sheet").waitFor();
   await page.waitForTimeout(300);

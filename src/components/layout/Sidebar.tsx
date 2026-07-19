@@ -21,6 +21,7 @@ import {
   LifeBuoy,
   Activity,
   LayoutGrid,
+  ScanLine,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -161,10 +162,12 @@ const adminItems: NavItem[] = [
 export function Sidebar({
   active,
   onChange,
+  onQrMode,
   role,
 }: {
   active: TabKey;
   onChange: (k: TabKey) => void;
+  onQrMode: () => void;
   role: DemoUser["role"];
 }) {
   const canSeeAdmin = role === "admin";
@@ -172,12 +175,6 @@ export function Sidebar({
   const roleUtilityItems = canSeeAdmin
     ? utilityItems.filter((item) => item.key !== "points")
     : utilityItems;
-  const mobilePrimaryItems = canSeeAdmin
-    ? adminItems.slice(0, 4)
-    : workspaceItems.slice(0, 4);
-  const mobileLeadingItems = mobilePrimaryItems.slice(0, 2);
-  const mobileTrailingItems = mobilePrimaryItems.slice(2);
-  const moreIsActive = moreOpen || !mobilePrimaryItems.some((item) => item.key === active);
   const featureCount = roleUtilityItems.length + (canSeeAdmin
     ? adminItems.length
     : workspaceItems.length + personalItems.length);
@@ -305,18 +302,20 @@ export function Sidebar({
               color: "#6F6F6F",
             }}
           >
-            Student learning portal
+            CCS Tutorial Clinic
           </div>
         </div>
       </div>
 
       <nav className="mobile-nav-bar" aria-label="Mobile navigation">
-        {mobileLeadingItems.map((item) => <MobileNavButton key={item.key} item={item} active={active === item.key} onClick={() => choose(item.key)} />)}
-        <button className={`mobile-nav-button mobile-nav-more ${moreIsActive ? "is-active" : ""}`} type="button" onClick={() => setMoreOpen(true)} aria-label="More" aria-haspopup="dialog" aria-expanded={moreOpen}>
-          <span className="mobile-nav-more-icon"><LayoutGrid size={21} strokeWidth={2} /></span>
-          <span className="mobile-nav-more-label">More</span>
+        <button className="mobile-nav-button mobile-nav-qr" type="button" onClick={onQrMode} aria-label="Scan / QR" aria-haspopup="dialog">
+          <span className="mobile-nav-action-icon"><ScanLine size={21} strokeWidth={2} /></span>
+          <span>Scan / QR</span>
         </button>
-        {mobileTrailingItems.map((item) => <MobileNavButton key={item.key} item={item} active={active === item.key} onClick={() => choose(item.key)} />)}
+        <button className={`mobile-nav-button mobile-nav-hub ${moreOpen ? "is-active" : ""}`} type="button" onClick={() => setMoreOpen(true)} aria-label="More" aria-haspopup="dialog" aria-expanded={moreOpen}>
+          <span className="mobile-nav-action-icon"><LayoutGrid size={21} strokeWidth={2} /></span>
+          <span>Navigation hub</span>
+        </button>
       </nav>
 
       {moreOpen && <div className="mobile-more-overlay" onMouseDown={() => setMoreOpen(false)}>
@@ -334,10 +333,6 @@ export function Sidebar({
       </div>}
     </aside>
   );
-}
-
-function MobileNavButton({ item, active, onClick }: { item: NavItem; active: boolean; onClick: () => void }) {
-  return <button className={`mobile-nav-button ${active ? "is-active" : ""}`} type="button" onClick={onClick} aria-current={active ? "page" : undefined}>{item.icon}<span>{item.label.replace("Admin ", "").replace("My ", "")}</span></button>;
 }
 
 function MobileMenuGroup({ label, items, active, onChange }: { label: string; items: NavItem[]; active: TabKey; onChange: (key: TabKey) => void }) {

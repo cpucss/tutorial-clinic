@@ -6,6 +6,7 @@ import App from "../app/App";
 import { AppDataProvider, appDataReducer } from "../context/AppDataContext";
 import { createSeedState, DEMO_STORAGE_KEY } from "../data/seed";
 import { attendanceService } from "../services";
+import { buildAttendanceQrPayload, parseAttendanceQrPayload } from "../features/attendance/qr";
 
 function renderApp() {
   return render(<HashRouter><AppDataProvider><App /></AppDataProvider></HashRouter>);
@@ -75,6 +76,27 @@ describe("core front-end demo workflows", () => {
     const seed = createSeedState();
     expect(attendanceService.hasDuplicate(seed, "stu-042", "evt-3")).toBe(true);
     expect(attendanceService.hasDuplicate(seed, "stu-208", "evt-3")).toBe(false);
+  });
+
+  it("builds and validates Tutorial Clinic attendance QR payloads", () => {
+    const payload = buildAttendanceQrPayload("evt-1", "TC-R101");
+    expect(parseAttendanceQrPayload(payload)).toEqual({ eventId: "evt-1", code: "TC-R101" });
+    expect(parseAttendanceQrPayload("https://example.com/not-an-attendance-code")).toBeNull();
+  });
+
+  it("uses a focused two-action mobile dock with scan and generate QR modes", async () => {
+    const seed = createSeedState(); seed.currentUserId = "stu-042";
+    window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(seed));
+    window.location.hash = "#/dashboard";
+    const view = renderApp();
+    await waitFor(() => expect(view.container.querySelector("#main-content")).toBeInTheDocument());
+    const dockButtons = view.container.querySelectorAll(".mobile-nav-bar > button");
+    expect(dockButtons).toHaveLength(2);
+    expect(Array.from(dockButtons).map((button) => button.getAttribute("aria-label"))).toEqual(["Scan / QR", "More"]);
+    fireEvent.click(screen.getByRole("button", { name: "Scan / QR" }));
+    expect(await screen.findByRole("dialog", { name: "QR mode" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Generate QR" }));
+    expect(view.container.querySelector(".qr-mode-code-panel svg")).toBeInTheDocument();
   });
 
   it("stores note rejection feedback for resubmission", () => {
