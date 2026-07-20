@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from "react";
 import { queueMutation } from "../offline/outboxRepository";
 import { setupAutoSync } from "../sync/syncEngine";
-import { getSessions } from "../services/supabase/sessionRepository";
+import { getSessions, saveSession } from "../services/supabase/sessionRepository";
 import {
   getAttendance,
   moderateAttendance as moderateAttendanceInSupabase,
@@ -501,6 +501,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       capacity: Number(input.capacity), status: input.status ?? "Upcoming", attendanceCode: input.attendanceCode?.trim().toUpperCase() || `TC-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
       createdAt: input.createdAt ?? new Date().toISOString(),
     };
+
+    // ── Save directly to Supabase Database
+    saveSession(event).catch(console.error);
+
     dispatch({ type: "UPSERT_EVENT", event });
     return { ok: true };
   }, []);
