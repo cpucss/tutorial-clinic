@@ -1,4 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from "react";
+import { queueMutation } from "../offline/outboxRepository";
+import { setupAutoSync } from "../sync/syncEngine";
+import { getSessions } from "../services/supabase/sessionRepository";
+import { getAttendance } from "../services/supabase/attendanceRepository";
 
 import { createSeedState, defaultPreferences, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
 import yearLevelMap from "../data/year_level_map.json";
@@ -323,6 +327,39 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.dataset.compactNavigation = String(preferences.compactNavigation);
   }, [currentUser, state.preferences]);
 
+  // ── Start the Offline Sync Engine for the current user
+  useEffect(() => {
+    if (!currentUser) return;
+    // Starts the background loop that pushes outbox mutations to Supabase when online
+    const cleanup = setupAutoSync(currentUser.id);
+    return cleanup;
+  }, [currentUser?.id]);
+
+  // ── Fetch live data from Supabase and hydrate local state on login
+  const [hasFetchedLive, setHasFetchedLive] = useState(false);
+  useEffect(() => {
+    if (!currentUser || hasFetchedLive) return;
+
+    setHasFetchedLive(true);
+
+    // Fetch sessions and merge into state
+    getSessions().then(({ data }) => {
+      if (!data) return;
+      data.forEach((event) => dispatch({ type: "UPSERT_EVENT", event }));
+    }).catch(console.error);
+
+    // Fetch this user's attendance records and merge into state
+    getAttendance(currentUser.studentId).then(({ data }) => {
+      if (!data) return;
+      data.forEach((record) => dispatch({ type: "ADD_ATTENDANCE", record }));
+    }).catch(console.error);
+  }, [currentUser, hasFetchedLive]);
+
+  // Reset fetch flag on logout so next login re-fetches fresh data
+  useEffect(() => {
+    if (!currentUser) setHasFetchedLive(false);
+  }, [currentUser]);
+
   const login = useCallback((studentId: string, name?: string, supabaseRole?: string): Result => {
     const normalized = studentId.trim().toUpperCase();
     if (!normalized) return { ok: false, message: "Student ID is required." };
@@ -425,6 +462,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     if (!existing && count >= event.capacity) return { ok: false, message: "This session is already full." };
     if (!existing && ["Cancelled", "Completed"].includes(event.status)) return { ok: false, message: "RSVP is closed for this session." };
     dispatch({ type: "TOGGLE_RSVP", userId: currentUser.id, eventId });
+
+    // ── Offline First: Queue the action for Supabase sync
+    queueMutation(
+      currentUser.id,
+      "rsvp",
+      eventId,
+      existing ? "delete" : "upsert",
+      { sessionId: eventId, studentId: currentUser.id }
+    ).catch(console.error);
+
     return { ok: true, message: existing ? "RSVP cancelled." : "RSVP saved and added to My Schedule." };
   }, [currentUser, state.events, state.rsvps]);
 
@@ -443,6 +490,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     const minutes = (Date.now() - new Date(event.date).getTime()) / 60000;
     const arrival = minutes < -10 ? "Early" : minutes <= 10 ? "On time" : "Late";
     dispatch({ type: "ADD_ATTENDANCE", record: { id: uid("att"), eventId, userId: currentUser.id, checkedInAt: new Date().toISOString(), method, arrival, status: "Pending" } });
+
+    // ── Offline First: Queue the attendance log for Supabase sync
+    queueMutation(
+      currentUser.id,
+      "attendance",
+      eventId, // using eventId as the entityId for the mutation
+      "upsert",
+      { sessionId: eventId, studentId: currentUser.id, method, arrival }
+    ).catch(console.error);
+
     return { ok: true, message: "Attendance submitted for admin approval." };
   }, [currentUser, state.attendance, state.events]);
 
