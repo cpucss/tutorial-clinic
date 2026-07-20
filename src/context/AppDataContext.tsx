@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from "react";
 
 import { createSeedState, defaultPreferences, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
+import yearLevelMap from "../data/year_level_map.json";
 import type {
   AttendanceRecord,
   DemoEvent,
@@ -62,28 +63,64 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
       return { ...state, currentUserId: action.userId };
     case "LOGOUT":
       return { ...state, currentUserId: null };
-    case "COMPLETE_SETUP":
+    case "COMPLETE_SETUP": {
+      const isSkipped = !action.password;
       return {
         ...state,
         users: state.users.map((user) => user.id === action.userId ? {
           ...user,
           accountSetup: {
-            completed: true,
-            backupEmail: action.backupEmail,
-            demoPassword: action.password,
-            completedAt: new Date().toISOString(),
+            completed: !isSkipped,
+            skipped: isSkipped,
+            backupEmail: isSkipped ? undefined : action.backupEmail,
+            demoPassword: isSkipped ? undefined : action.password,
+            completedAt: isSkipped ? undefined : new Date().toISOString(),
           },
         } : user),
-        notifications: [
+        notifications: isSkipped ? state.notifications : [
           notification(action.userId, "Account setup complete", "Your account setup was saved on this device.", "Account", "settings"),
           ...state.notifications,
         ],
       };
+    }
     case "UPSERT_EVENT": {
-      const exists = state.events.some((event) => event.id === action.event.id);
+      const existing = state.events.find((ev) => ev.id === action.event.id);
+      const exists = Boolean(existing);
+
+      // Detect instructor assignment: session was TBA, now has a real instructor name
+      const wasTBA = !existing?.instructor || existing.instructor === "To Be Determined";
+      const nowHasInstructor = Boolean(action.event.instructor && action.event.instructor !== "To Be Determined");
+      const instructorJustAssigned = exists && wasTBA && nowHasInstructor;
+
+      let notifications = state.notifications;
+      if (instructorJustAssigned) {
+        // Notify students who RSVPed + all active students in the event's eligible year levels
+        const rsvpedIds = new Set(state.rsvps.filter((r) => r.eventId === action.event.id).map((r) => r.userId));
+        const yearLevelIds = new Set(
+          state.users
+            .filter((u) => u.role !== "admin" && u.active && action.event.yearLevels.includes(u.yearLevel))
+            .map((u) => u.id)
+        );
+        const notifyIds = Array.from(new Set([...rsvpedIds, ...yearLevelIds]));
+        const newNotifications = notifyIds.map((userId) => ({
+          id: uid("notif"),
+          userId,
+          type: "Session" as const,
+          title: "Instructor announced!",
+          body: `${action.event.instructor} will facilitate ${action.event.title}.`,
+          link: "schedule",
+          readAt: undefined,
+          createdAt: new Date().toISOString(),
+        }));
+        notifications = [...newNotifications, ...state.notifications];
+      }
+
       return {
         ...state,
-        events: exists ? state.events.map((event) => event.id === action.event.id ? action.event : event) : [action.event, ...state.events],
+        events: exists
+          ? state.events.map((ev) => (ev.id === action.event.id ? action.event : ev))
+          : [action.event, ...state.events],
+        notifications,
       };
     }
     case "DELETE_EVENT":
@@ -213,9 +250,26 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
 function loadState(): DemoState {
   try {
     const stored = window.localStorage.getItem(DEMO_STORAGE_KEY);
-    if (!stored) return createSeedState();
-    const parsed = JSON.parse(stored) as DemoState;
-    return parsed.version === DEMO_STATE_VERSION ? parsed : createSeedState();
+    let parsed: DemoState;
+    if (!stored) {
+      parsed = createSeedState();
+    } else {
+      const data = JSON.parse(stored) as DemoState;
+      parsed = data.version === DEMO_STATE_VERSION ? data : createSeedState();
+    }
+    // Correct yearLevel for all users from the authoritative map on startup
+    parsed.users = parsed.users.map((user) => {
+      // JSON keys are lowercase (e.g. "25-2018-23"), so we must match that case
+      const baseId = user.studentId.toLowerCase().endsWith("-admin")
+        ? user.studentId.toLowerCase().replace("-admin", "")
+        : user.studentId.toLowerCase();
+      const correctYear = (yearLevelMap as Record<string, string>)[baseId];
+      if (correctYear && user.yearLevel !== correctYear) {
+        return { ...user, yearLevel: correctYear as any };
+      }
+      return user;
+    });
+    return parsed;
   } catch {
     return createSeedState();
   }
@@ -226,7 +280,7 @@ type AppDataContextValue = {
   currentUser: DemoUser | null;
   currentPoints: number;
   unreadCount: number;
-  login: (studentId: string) => Result;
+  login: (studentId: string, name?: string) => Result;
   logout: () => void;
   completeAccountSetup: (backupEmail: string, password: string) => Result;
   saveEvent: (input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity" | "instructor">) => Result;
@@ -269,26 +323,83 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.dataset.compactNavigation = String(preferences.compactNavigation);
   }, [currentUser, state.preferences]);
 
-  const login = useCallback((studentId: string): Result => {
+  const login = useCallback((studentId: string, name?: string, supabaseRole?: string): Result => {
     const normalized = studentId.trim().toUpperCase();
     if (!normalized) return { ok: false, message: "Student ID is required." };
-    if (!/^(?:\d{4}-\d{5}|ADMIN-\d{3})$/.test(normalized)) return { ok: false, message: "Invalid Student ID format. Use YYYY-00000." };
-    const user = state.users.find((item) => item.studentId.toUpperCase() === normalized && item.active);
-    if (!user) return { ok: false, message: "Student account was not found." };
+
+    // Detect admin from ID suffix OR from Supabase profile role
+    const isAdmin = normalized.endsWith("-ADMIN") || supabaseRole === "admin";
+    
+    let user = state.users.find((item) => item.studentId.toUpperCase() === normalized && item.active);
+    
+    // Since Supabase already verified the password, if they aren't in local state yet, we add them!
+    if (!user) {
+      // Look up their year level from the authoritative class roll map (IDs only, no names)
+      // Admins have -ADMIN suffix, we strip it out to find their real year level
+      // JSON keys are lowercase, so we must use lowercase for the lookup
+      const baseId = normalized.toLowerCase().endsWith("-admin") ? normalized.toLowerCase().replace("-admin", "") : normalized.toLowerCase();
+      const yearLevel = (yearLevelMap as Record<string, string>)[baseId] ?? "Freshman";
+      const newUser: DemoUser = {
+        id: `stu-${Date.now()}`,
+        studentId: normalized,
+        name: name || "Verified Student",
+        email: `${normalized.toLowerCase()}@cpucss.edu.ph`,
+        yearLevel: yearLevel as "Freshman" | "Sophomore" | "Junior" | "Senior",
+        program: "BS Computer Science",
+        section: "A",
+        role: isAdmin ? "admin" : "student",
+        active: true,
+        // Admins skip the account setup modal, students see it on first login
+        accountSetup: isAdmin ? { completed: true } : { completed: false }
+      };
+      dispatch({ type: "UPDATE_USER", user: newUser });
+      user = newUser;
+    } else {
+      // Auto-correct year level, name, or role if they changed
+      // JSON keys are lowercase, so we must use lowercase for the lookup
+      const baseId = normalized.toLowerCase().endsWith("-admin") ? normalized.toLowerCase().replace("-admin", "") : normalized.toLowerCase();
+      const correctYear = (yearLevelMap as Record<string, string>)[baseId] ?? "Freshman";
+      let updatedUser = { ...user };
+      let changed = false;
+      if (user.yearLevel !== correctYear) {
+        updatedUser.yearLevel = correctYear as any;
+        changed = true;
+      }
+      if (name && user.name !== name) {
+        updatedUser.name = name;
+        changed = true;
+      }
+      // Correct role if it doesn't match
+      const correctRole = isAdmin ? "admin" : "student";
+      if (user.role !== correctRole) {
+        updatedUser.role = correctRole as any;
+        changed = true;
+      }
+      if (changed) {
+        dispatch({ type: "UPDATE_USER", user: updatedUser });
+        user = updatedUser;
+      }
+    }
+    
     dispatch({ type: "LOGIN", userId: user.id });
     return { ok: true };
   }, [state.users]);
 
-  const completeAccountSetup = useCallback((backupEmail: string, password: string): Result => {
+  const completeAccountSetup = useCallback((backupEmail: string, password: string, skip = false): Result => {
     if (!currentUser) return { ok: false, message: "No student is signed in." };
-    if (!/^\S+@\S+\.\S+$/.test(backupEmail.trim())) return { ok: false, message: "Enter a valid backup email address." };
-    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) return { ok: false, message: "Password does not meet all requirements." };
-    dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, backupEmail: backupEmail.trim(), password });
+    if (!skip) {
+      if (currentUser.role !== "admin") {
+        if (!backupEmail.trim().toLowerCase().endsWith("@cpu.edu.ph")) return { ok: false, message: "Please enter a valid @cpu.edu.ph email address." };
+      }
+      if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) return { ok: false, message: "Password does not meet all requirements." };
+    }
+    dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, backupEmail: currentUser.role === "admin" ? "" : backupEmail.trim(), password });
     return { ok: true };
   }, [currentUser]);
 
-  const saveEvent = useCallback((input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity" | "instructor">): Result => {
-    if (!input.title.trim() || !input.subjectId || !input.venue.trim() || !input.instructor.trim()) return { ok: false, message: "Complete all required session fields." };
+  const saveEvent = useCallback((input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity">): Result => {
+    // Instructor is optional — defaults to "To Be Determined" if not provided
+    if (!input.title.trim() || !input.subjectId || !input.venue.trim()) return { ok: false, message: "Complete all required session fields (title, subject, venue)." };
     if (!input.date || !input.endDate || Number.isNaN(new Date(input.date).getTime()) || Number.isNaN(new Date(input.endDate).getTime())) return { ok: false, message: "Add a valid start and end date." };
     if (!Number.isFinite(input.capacity) || input.capacity < 1) return { ok: false, message: "Capacity must be at least 1." };
     if (new Date(input.endDate) <= new Date(input.date)) return { ok: false, message: "End time must be after the start time." };
@@ -296,7 +407,8 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       id: input.id ?? uid("evt"), title: input.title.trim(), subjectId: input.subjectId,
       description: input.description?.trim() || "Tutorial Clinic study session.", topics: input.topics ?? [],
       date: input.date, endDate: input.endDate, yearLevels: input.yearLevels ?? ["Freshman", "Sophomore", "Junior", "Senior"],
-      instructor: input.instructor.trim(), instructorRole: input.instructorRole?.trim() || "Facilitator", venue: input.venue.trim(),
+      instructor: input.instructor?.trim() || "To Be Determined",
+      instructorRole: input.instructorRole?.trim() || "Facilitator", venue: input.venue.trim(),
       capacity: Number(input.capacity), status: input.status ?? "Upcoming", attendanceCode: input.attendanceCode?.trim().toUpperCase() || `TC-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
       createdAt: input.createdAt ?? new Date().toISOString(),
     };
