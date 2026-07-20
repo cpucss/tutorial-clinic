@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { CalendarPlus, Download, Eye, Pencil, Search, Trash2, X } from "lucide-react";
+import {useEffect, useMemo, useRef, useState} from "react";
+import { CalendarPlus, Check, ChevronDown, Download, Eye, Pencil, Search, Trash2, X } from "lucide-react";
 import { ConfirmDialog, EmptyState, InlineNotice, StatusBadge } from "../../../components/common/Feedback";
 import type { ToastMessage } from "../../../components/common/Feedback";
 import { effectiveEventStatus, getRsvpCount, useAppData } from "../../../context/AppDataContext";
@@ -251,6 +251,277 @@ function Filter({
   );
 }
 
+// ─── SearchableSubjectDropdown ───────────────────────────────────────────────────────────
+function SearchableSubjectDropdown({
+  subjects,
+  value,
+  onChange,
+}: {
+  subjects: Subject[];
+  value: string;
+  onChange: (subjectId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const selectedSubject = subjects.find(
+    (subject) => subject.id === value,
+  );
+
+  const filteredSubjects = useMemo(() => {
+    const normalizedQuery = searchQuery
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedQuery) {
+      return subjects;
+    }
+
+    return subjects.filter((subject) => {
+      const searchableText = [
+        subject.code,
+        subject.name,
+        subject.yearLevel,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(normalizedQuery);
+    });
+  }, [searchQuery, subjects]);
+
+  useEffect(() => {
+    function handleOutsideClick(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(
+          event.target as Node,
+        )
+      ) {
+        setOpen(false);
+        setSearchQuery("");
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setSearchQuery("");
+      }
+    }
+
+    document.addEventListener(
+      "mousedown",
+      handleOutsideClick,
+    );
+
+    document.addEventListener(
+      "keydown",
+      handleEscape,
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handleOutsideClick,
+      );
+
+      document.removeEventListener(
+        "keydown",
+        handleEscape,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      window.setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 0);
+    }
+  }, [open]);
+
+  function selectSubject(subjectId: string) {
+    onChange(subjectId);
+    setOpen(false);
+    setSearchQuery("");
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative"
+    >
+      {/* Selected subject / dropdown trigger */}
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex min-h-[42px] w-full items-center justify-between gap-3 rounded-lg border border-[#E8E3D8] bg-white px-3 py-2 text-left outline-none transition focus:border-[#F5A623]"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <div className="min-w-0">
+          {selectedSubject ? (
+            <div className="truncate text-sm font-medium text-[#1C1C1C]">
+              {selectedSubject.code}:{" "}
+              {selectedSubject.name}
+            </div>
+          ) : (
+            <div className="text-sm text-[#A0A0A0]">
+              Select a subject
+            </div>
+          )}
+        </div>
+
+        <ChevronDown
+          size={17}
+          className={`shrink-0 text-[#6F6F6F] transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          className="absolute left-0 right-0 z-[100] mt-2 overflow-hidden rounded-xl border border-[#E8E3D8] bg-white"
+          style={{
+            boxShadow:
+              "0 14px 35px rgba(28, 28, 28, 0.16)",
+          }}
+        >
+          {/* Search input */}
+          <div className="border-b border-[#F0EFE9] p-3">
+            <label className="flex items-center gap-2 rounded-lg bg-[#FAF8F2] px-3">
+              <Search
+                size={15}
+                className="shrink-0 text-[#A0A0A0]"
+              />
+
+              <input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(event) =>
+                  setSearchQuery(event.target.value)
+                }
+                placeholder="Search subject code or name"
+                className="h-10 w-full bg-transparent text-sm text-[#1C1C1C] outline-none placeholder:text-[#A0A0A0]"
+              />
+            </label>
+          </div>
+
+          {/* Subject results */}
+          <div
+            className="max-h-72 overflow-y-auto p-2"
+            role="listbox"
+          >
+            {YEAR_GROUPS.map((group) => {
+              const groupSubjects =
+                filteredSubjects.filter((subject) =>
+                  group.levels.includes(
+                    subject.yearLevel as YearLevel,
+                  ),
+                );
+
+              if (!groupSubjects.length) {
+                return null;
+              }
+
+              return (
+                <div
+                  key={group.label}
+                  className="mb-3 last:mb-0"
+                >
+                  {/* Orange year-group heading */}
+                  <div
+                    className="mb-1 rounded-lg px-3 py-2 text-xs font-bold"
+                    style={{
+                      background: "#F5A623",
+                      color: "#1C1C1C",
+                    }}
+                  >
+                    {group.label}
+                  </div>
+
+                  <div className="grid gap-1">
+                    {groupSubjects.map((subject) => {
+                      const isSelected =
+                        subject.id === value;
+
+                      return (
+                        <button
+                          key={subject.id}
+                          type="button"
+                          role="option"
+                          aria-selected={isSelected}
+                          onClick={() =>
+                            selectSubject(subject.id)
+                          }
+                          className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition hover:bg-[#FAF8F2]"
+                          style={{
+                            background: isSelected
+                              ? "#FFF3DF"
+                              : "transparent",
+                          }}
+                        >
+                          <div className="min-w-0">
+                            <div
+                              className="truncate text-sm font-semibold"
+                              style={{
+                                color: "#1C1C1C",
+                              }}
+                            >
+                              {subject.code}
+                            </div>
+
+                            <div
+                              className="truncate text-xs"
+                              style={{
+                                color: "#777777",
+                              }}
+                            >
+                              {subject.name}
+                            </div>
+                          </div>
+
+                          {isSelected && (
+                            <Check
+                              size={17}
+                              className="shrink-0"
+                              color="#F5A623"
+                              strokeWidth={2.5}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {!filteredSubjects.length && (
+              <div className="px-4 py-8 text-center">
+                <div className="text-sm font-semibold text-[#1C1C1C]">
+                  No subjects found
+                </div>
+
+                <div className="mt-1 text-xs text-[#A0A0A0]">
+                  Try searching with another subject code
+                  or name.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Session Editor ───────────────────────────────────────────────────────────
 function SessionEditor({
   event,
@@ -345,24 +616,15 @@ function SessionEditor({
           </label>
 
           {/* Subject */}
-          <label className="form-field md:col-span-2">
+          <div className="form-field md:col-span-2">
             <span>Subject</span>
-            <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
-              {YEAR_GROUPS.map((group) => {
-                const groupSubjects = state.subjects.filter((s) => group.levels.includes(s.yearLevel as YearLevel));
-                if (!groupSubjects.length) return null;
-                return (
-                  <optgroup key={group.label} label={group.label}>
-                    {groupSubjects.map((sub) => (
-                      <option key={sub.id} value={sub.id}>
-                        {sub.code}: {sub.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-            </select>
-          </label>
+
+            <SearchableSubjectDropdown
+              subjects={state.subjects}
+              value={subjectId}
+              onChange={setSubjectId}
+            />
+          </div>
 
           {/* Status */}
           <label className="form-field">
