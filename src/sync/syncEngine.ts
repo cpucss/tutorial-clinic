@@ -2,6 +2,9 @@
 // Triggers on: app startup, browser online event, tab visibility change, and a 30s interval.
 
 import { getReadyMutations, markSyncing, removeMutation, markFailed, markConflict } from "../offline/outboxRepository";
+import type { OutboxMutation } from "../offline/database";
+import { submitAttendance } from "../services/supabase/attendanceRepository";
+import { toggleRsvp } from "../services/supabase/sessionRepository";
 
 let isSyncing = false;
 
@@ -22,7 +25,7 @@ function isPermanentError(error: unknown): boolean {
 // Processes the outbox queue. The applyMutation callback handles actual Supabase calls.
 export async function synchronize(
   userId: string,
-  applyMutation: (mutation: unknown) => Promise<unknown>
+  applyMutation: (mutation: OutboxMutation) => Promise<unknown> = defaultApplyMutation
 ): Promise<{ synced: number; failed: number }> {
   if (isSyncing) return { synced: 0, failed: 0 };
   isSyncing = true;
@@ -62,7 +65,7 @@ export async function synchronize(
 // Registers automatic sync triggers. Returns a cleanup function.
 export function setupAutoSync(
   userId: string,
-  applyMutation: (mutation: unknown) => Promise<unknown>
+  applyMutation: (mutation: OutboxMutation) => Promise<unknown> = defaultApplyMutation
 ): () => void {
   const runSync = () => synchronize(userId, applyMutation);
 
@@ -82,4 +85,24 @@ export function setupAutoSync(
     document.removeEventListener("visibilitychange", handleVisibility);
     clearInterval(intervalId);
   };
+}
+
+// Routes outbox items to the correct Supabase API based on their entityType
+async function defaultApplyMutation(mutation: OutboxMutation): Promise<unknown> {
+  const { entityType, payload } = mutation;
+  const p = payload as any; // Cast for dynamic property access
+
+  switch (entityType) {
+    case "attendance":
+      // Calls our Supabase API
+      return await submitAttendance(p.sessionId, p.studentId);
+    
+    case "rsvp":
+      // Calls our Supabase API
+      return await toggleRsvp(p.sessionId, p.studentId);
+    
+    default:
+      console.warn(`Unsupported mutation type: ${entityType}`);
+      return null;
+  }
 }
