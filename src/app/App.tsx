@@ -34,7 +34,6 @@ const AdminAttendancePage = lazy(() => import("../features/admin/pages/AdminAtte
 const AdminSessionsPage = lazy(() => import("../features/admin/pages/AdminSessionsPage").then((module) => ({ default: module.AdminSessionsPage })));
 const AdminNotesApprovalPage = lazy(() => import("../features/admin/pages/AdminNotesApprovalPage").then((module) => ({ default: module.AdminNotesApprovalPage })));
 const AdminStudentsPage = lazy(() => import("../features/admin/pages/AdminStudentsPage").then((module) => ({ default: module.AdminStudentsPage })));
-const AdminSubjectsPage = lazy(() => import("../features/admin/pages/AdminSubjectsPage").then((module) => ({ default: module.AdminSubjectsPage })));
 
 const TITLES: Record<TabKey, string> = {
   dashboard: "Workspace / Dashboard", events: "Workspace / Events", schedule: "Workspace / My Schedule", "attendance-history": "Workspace / Attendance",
@@ -42,9 +41,8 @@ const TITLES: Record<TabKey, string> = {
   "points-history": "Personal / Point History", notifications: "Inbox / Notifications", announcements: "Community / Announcements", help: "Guides / Help",
   favourites: "Personal / Favourites", "my-notes": "Personal / My Notes", settings: "Account / Settings", "admin-dashboard": "Admin / Dashboard",
   "admin-attendance": "Admin / Attendance", "admin-sessions": "Admin / Sessions", "admin-notes": "Admin / Notes Approval", "admin-students": "Admin / Students",
-  "admin-subjects": "Admin / Subjects",
 };
-const ADMIN_TABS: TabKey[] = ["admin-dashboard", "admin-attendance", "admin-sessions", "admin-notes", "admin-students", "admin-subjects"];
+const ADMIN_TABS: TabKey[] = ["admin-dashboard", "admin-attendance", "admin-sessions", "admin-notes", "admin-students"];
 
 export default function App() {
   const location = useLocation(); const navigate = useNavigate(); const { currentUser, logout } = useAppData(); const [toasts, setToasts] = useState<ToastMessage[]>([]); const [qrEventId, setQrEventId] = useState<string | null>(null); const [qrModeOpen, setQrModeOpen] = useState(false); const [offline, setOffline] = useState(() => !navigator.onLine);
@@ -94,7 +92,7 @@ function Page({ tab, navigate, notify, showQr }: { tab: TabKey; navigate: (tab: 
     case "profile": return <ProfilePage onNavigate={navigate} />; case "points": return <PointsPage />; case "points-history": return <PointHistoryPage />; case "notifications": return <NotificationsPage onNavigate={navigate} />;
     case "announcements": return <AnnouncementsPage />; case "help": return <HelpPage />; case "favourites": return <FavouritesPage />; case "my-notes": return <MyNotesPage onNotify={notify} />; case "settings": return <SettingsPage onNotify={notify} />;
     case "admin-dashboard": return <AdminDashboardPage onNavigate={navigate} />; case "admin-attendance": return <AdminAttendancePage onNotify={notify} />; case "admin-sessions": return <AdminSessionsPage onNotify={notify} />;
-    case "admin-notes": return <AdminNotesApprovalPage onNotify={notify} />; case "admin-students": return <AdminStudentsPage onNotify={notify} />; case "admin-subjects": return <AdminSubjectsPage onNotify={notify} />;
+    case "admin-notes": return <AdminNotesApprovalPage onNotify={notify} />; case "admin-students": return <AdminStudentsPage onNotify={notify} />;
   }
 }
 function PageSkeleton() { return <div className="p-6 lg:p-10"><div className="grid gap-4 lg:grid-cols-[300px_1fr]"><SkeletonBlock lines={5} /><SkeletonBlock lines={8} /></div></div>; }
