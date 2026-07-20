@@ -105,9 +105,9 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
         const newNotifications = notifyIds.map((userId) => ({
           id: uid("notif"),
           userId,
-          type: "Session" as const,
+          type: "Event" as const,
           title: "Instructor announced!",
-          body: `${action.event.instructor} will facilitate ${action.event.title}.`,
+          message: `${action.event.instructor} will facilitate ${action.event.title}.`,
           link: "schedule",
           readAt: undefined,
           createdAt: new Date().toISOString(),
@@ -280,9 +280,9 @@ type AppDataContextValue = {
   currentUser: DemoUser | null;
   currentPoints: number;
   unreadCount: number;
-  login: (studentId: string, name?: string) => Result;
+  login: (studentId: string, name?: string, supabaseRole?: string) => Result;
   logout: () => void;
-  completeAccountSetup: (backupEmail: string, password: string) => Result;
+  completeAccountSetup: (backupEmail: string, password: string, skip?: boolean) => Result;
   saveEvent: (input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity" | "instructor">) => Result;
   deleteEvent: (eventId: string) => void;
   toggleRsvp: (eventId: string) => Result;
