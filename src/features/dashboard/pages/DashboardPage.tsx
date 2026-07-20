@@ -21,18 +21,41 @@ export function DashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => vo
   const recentNotifications = state.notifications.filter((item) => item.userId === currentUser.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 4);
   const announcement = state.announcements.filter((item) => item.audience === "All" || item.audience === currentUser.yearLevel).sort((a, b) => Number(b.pinned) - Number(a.pinned) || +new Date(b.publishedAt) - +new Date(a.publishedAt))[0];
 
+  const getFirstName = (fullName: string): string => {
+    if (!fullName) return "Student";
+    if (fullName.includes(",")) {
+      const parts = fullName.split(",");
+      if (parts[1]) {
+        return parts[1].trim().split(" ")[0];
+      }
+    }
+    return fullName.trim().split(" ")[0];
+  };
+
+  const getGreeting = () => {
+    const firstName = getFirstName(currentUser.name);
+    if (currentUser.role === "admin") {
+      return `Welcome, Admin ${firstName}!`;
+    }
+    // If account setup is NOT completed, it's their first time!
+    if (!currentUser.accountSetup?.completed) {
+      return `Welcome, ${firstName}!`;
+    }
+    return `Welcome back, ${firstName}!`;
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
         <section className="grid gap-5 xl:grid-cols-[1.3fr_.7fr]">
           <div className="motion-card rounded-xl bg-white p-6 demo-card">
-            <div className="section-kicker">Student dashboard</div>
-            <h1 className="page-heading mt-1">Welcome back, {currentUser.name.split(" ")[0]}</h1>
-            <p className="page-description">Your next study sessions, contributions, attendance, and community updates are all ready in one place.</p>
-            <dl className="mt-6 grid gap-3 sm:grid-cols-3">
+            <div className="section-kicker">
+              {currentUser.role === "admin" ? "Admin dashboard" : "Student dashboard"}
+            </div>
+            <h1 className="page-heading mt-1">{getGreeting()}</h1>
+            <dl className="mt-5 grid gap-3 sm:grid-cols-2">
               <Info label="Student ID" value={currentUser.studentId} />
-              <Info label="Program" value={currentUser.program} />
-              <Info label="Year and section" value={`${currentUser.yearLevel} - ${currentUser.section}`} />
+              <Info label="Year Level" value={currentUser.yearLevel ?? "Not set"} />
             </dl>
           </div>
           <div className="motion-card rounded-xl p-5 text-white" style={{ background: "#1C1C1C" }}>
