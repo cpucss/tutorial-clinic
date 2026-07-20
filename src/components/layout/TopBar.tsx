@@ -5,7 +5,7 @@ import { useAppData } from "../../context/AppDataContext";
 import { relativeTime } from "../../utils/format";
 import type { TabKey } from "./Sidebar";
 
-const breadcrumbTargets: Record<string, TabKey> = { Dashboard: "dashboard", Events: "events", Attendance: "attendance-history", Leaderboard: "leaderboard", "Notes Library": "notes", Profile: "profile", "Points Guide": "points", Notifications: "notifications", Favourites: "favourites", "My Notes": "my-notes", Settings: "settings", "My Schedule": "schedule", "Point History": "points-history", Announcements: "announcements", Help: "help", Admin: "admin-dashboard", Sessions: "admin-sessions", "Notes Approval": "admin-notes", Students: "admin-students", Subjects: "admin-subjects" };
+const breadcrumbTargets: Record<string, TabKey> = { Dashboard: "dashboard", Events: "events", Attendance: "attendance-history", Leaderboard: "leaderboard", "Notes Library": "notes", Profile: "profile", "Points Guide": "points", Notifications: "notifications", Favourites: "favourites", "My Notes": "my-notes", Settings: "settings", "My Schedule": "schedule", "Point History": "points-history", Announcements: "announcements", Help: "help", Admin: "admin-dashboard", Sessions: "admin-sessions", "Notes Approval": "admin-notes", Students: "admin-students" };
 const helpResults = [{ title: "Attendance instructions", tab: "help" as TabKey, keywords: "qr code scan check in" }, { title: "Notes submission guide", tab: "help" as TabKey, keywords: "upload review file" }, { title: "Account setup guide", tab: "help" as TabKey, keywords: "email password first login" }];
 
 export function TopBar({ title, onNavigate, onLogout, onShare }: { title: string; onNavigate: (tab: TabKey) => void; onLogout: () => void; onShare: () => void }) {
