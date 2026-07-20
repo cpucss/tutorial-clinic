@@ -24,7 +24,7 @@ export function SettingsPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessag
   function handleSaveSecurity(e: React.FormEvent) {
     e.preventDefault();
     setSetupError("");
-    if (currentUser.role !== "admin" && !setupEmail.trim().toLowerCase().endsWith("@cpu.edu.ph")) {
+    if (currentUser?.role !== "admin" && !setupEmail.trim().toLowerCase().endsWith("@cpu.edu.ph")) {
       setSetupError("Please enter a valid @cpu.edu.ph email address.");
       return;
     }
@@ -32,7 +32,7 @@ export function SettingsPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessag
       setSetupError("Passwords do not match.");
       return;
     }
-    const res = completeAccountSetup(currentUser.role === "admin" ? "" : setupEmail, setupPassword);
+    const res = completeAccountSetup(currentUser?.role === "admin" ? "" : setupEmail, setupPassword);
     if (!res.ok) {
       setSetupError(res.message);
       return;
