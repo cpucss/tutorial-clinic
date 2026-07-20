@@ -4,6 +4,7 @@ export type UserRole = "student" | "contributor" | "admin";
 
 export type DemoAccountSetup = {
   completed: boolean;
+  skipped?: boolean;
   backupEmail?: string;
   demoPassword?: string;
   completedAt?: string;
