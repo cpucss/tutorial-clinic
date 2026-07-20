@@ -1,25 +1,46 @@
 import { useState } from "react";
 import type React from "react";
-import { ArrowRight, GraduationCap, IdCard } from "lucide-react";
+import { ArrowRight, GraduationCap, IdCard, Eye, EyeOff } from "lucide-react";
 
 import { InlineNotice, LoadingLabel } from "../../../components/common/Feedback";
 import { useAppData } from "../../../context/AppDataContext";
+import { signInStudent, isDefaultPassword } from "../../../services/supabase/authAdapter";
 
 export function LoginPage() {
   const { login } = useAppData();
   const [studentId, setStudentId] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  function submit(event: React.FormEvent<HTMLFormElement>) {
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setLoading(true);
-    window.setTimeout(() => {
-      const result = login(studentId);
-      if (!result.ok) setError(result.message);
+
+    // 1. Authenticate against Supabase Database
+    const { data: authData, profile, error: authError } = await signInStudent(studentId, password);
+
+    if (authError) {
+      setError(authError);
       setLoading(false);
-    }, 280);
+      return;
+    }
+
+    // 2. If using default password, we will eventually force them to change it.
+    // For now, we will let them pass to verify the connection works.
+    if (isDefaultPassword(studentId, password)) {
+      console.log("Student is using default password. Force change flow will go here later.");
+    }
+
+    // 3. If Supabase approves, sign them into the local frontend state
+    const result = login(studentId, profile?.name, profile?.role ?? undefined);
+    if (!result.ok) {
+      setError(result.message || "Failed to load student profile.");
+    }
+    
+    setLoading(false);
   }
 
   return (
@@ -48,28 +69,58 @@ export function LoginPage() {
           <section className="auth-card" aria-labelledby="login-title">
             <div className="auth-card-icon"><IdCard size={19} /></div>
             <h2 id="login-title">Student sign in</h2>
-            <p>Enter your assigned Student ID to continue.</p>
+            <p>Enter your assigned Student ID and password to continue.</p>
 
             <form onSubmit={submit} noValidate>
               {error && <InlineNotice tone="error" title="Unable to sign in">{error}</InlineNotice>}
+              
               <label className="auth-field" htmlFor="student-id">
                 <span>Student ID</span>
                 <input
                   id="student-id"
                   value={studentId}
                   onChange={(event) => setStudentId(event.target.value.toUpperCase())}
-                  placeholder="2024-00421"
+                  placeholder="24-1234-56"
                   autoComplete="username"
                   inputMode="text"
                   aria-invalid={Boolean(error)}
-                  aria-describedby={error ? "login-help login-error" : "login-help"}
                   autoFocus
                 />
               </label>
-              <p id="login-help" className="auth-form-help">Format: YYYY-00000. Administrators may use their assigned ADMIN ID.</p>
+
+              <label className="auth-field mt-3" htmlFor="password">
+                <span>Password</span>
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? "login-help login-error" : "login-help"}
+                    style={{ paddingRight: "40px" }}
+                  />
+                  <button 
+                    type="button" 
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </label>
+
+              <p id="login-help" className="auth-form-help mt-2">
+                Format: YY-XXXX-ZZ. For your first login, your password is your ID without dashes (e.g. 24123456).
+              </p>
+              
               {error && <span id="login-error" className="sr-only">{error}</span>}
-              <button type="submit" className="auth-submit" disabled={loading}>
-                {loading ? <LoadingLabel label="Checking Student ID" /> : <><span>Login</span><ArrowRight size={16} /></>}
+              
+              <button type="submit" className="auth-submit mt-5" disabled={loading || !studentId || !password}>
+                {loading ? <LoadingLabel label="Authenticating..." /> : <><span>Login</span><ArrowRight size={16} /></>}
               </button>
             </form>
 
