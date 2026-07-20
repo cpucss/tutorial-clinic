@@ -23,18 +23,26 @@ export async function getAttendance(studentId?: string): Promise<{ data: Attenda
     status: row.status as "Pending" | "Approved" | "Rejected",
     createdAt: row.scanned_at,
     checkedInAt: row.scanned_at,
-    method: "Code" as const, // Default fallback
-    arrival: "On time" as const, // Default fallback
+    method: (row.method ?? "QR") as AttendanceRecord["method"],
+    arrival: (row.arrival ?? "On time") as AttendanceRecord["arrival"],
+    reviewedAt: row.reviewed_at ?? undefined,
+    reviewedBy: row.reviewed_by ?? undefined,
+    correctionNote: row.correction_note ?? undefined,
   }));
 
   return { data: mappedData, error: null };
 }
 
 // Submits a new attendance log
-export async function submitAttendance(sessionId: string, studentId: string): Promise<{ data: any; error: any }> {
+export async function submitAttendance(
+  sessionId: string,
+  studentId: string,
+  method: AttendanceRecord["method"] = "Code",
+  arrival?: AttendanceRecord["arrival"],
+): Promise<{ data: any; error: any }> {
   const { data, error } = await supabase
     .from("attendance")
-    .insert([{ session_id: sessionId, student_id: studentId, status: "Pending" }])
+    .insert([{ session_id: sessionId, student_id: studentId, status: "Pending", method, arrival }])
     .select()
     .single();
 

@@ -6,7 +6,7 @@ import App from "../app/App";
 import { AppDataProvider, appDataReducer } from "../context/AppDataContext";
 import { createSeedState, DEMO_STORAGE_KEY } from "../data/seed";
 import { attendanceService } from "../services";
-import { buildAttendanceQrPayload, parseAttendanceQrPayload } from "../features/attendance/qr";
+import { buildStudentAttendanceQrPayload, parseStudentAttendanceQrPayload } from "../features/attendance/qr";
 
 function renderApp() {
   return render(<HashRouter><AppDataProvider><App /></AppDataProvider></HashRouter>);
@@ -78,24 +78,26 @@ describe("core front-end demo workflows", () => {
     expect(attendanceService.hasDuplicate(seed, "stu-208", "evt-3")).toBe(false);
   });
 
-  it("builds and validates Tutorial Clinic attendance QR payloads", () => {
-    const payload = buildAttendanceQrPayload("evt-1", "TC-R101");
-    expect(parseAttendanceQrPayload(payload)).toEqual({ eventId: "evt-1", code: "TC-R101" });
-    expect(parseAttendanceQrPayload("https://example.com/not-an-attendance-code")).toBeNull();
+  it("builds and validates personal student attendance QR payloads", () => {
+    const credential = { userId: "3cf559c4-b961-4f59-965a-60fab82ed1ca", studentId: "24-1234-56", nonce: "random-token", issuedAt: 1_000, expiresAt: 301_000 };
+    const payload = buildStudentAttendanceQrPayload(credential);
+    expect(parseStudentAttendanceQrPayload(payload)).toEqual(credential);
+    expect(parseStudentAttendanceQrPayload("https://example.com/not-an-attendance-code")).toBeNull();
   });
 
-  it("uses a focused two-action mobile dock with scan and generate QR modes", async () => {
+  it("opens the student's personal attendance QR from the mobile dock", async () => {
     const seed = createSeedState(); seed.currentUserId = "stu-042";
+    const student = seed.users.find((user) => user.id === "stu-042");
+    if (student) student.authUserId = "3cf559c4-b961-4f59-965a-60fab82ed1ca";
     window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(seed));
     window.location.hash = "#/dashboard";
     const view = renderApp();
     await waitFor(() => expect(view.container.querySelector("#main-content")).toBeInTheDocument());
     const dockButtons = view.container.querySelectorAll(".mobile-nav-bar > button");
     expect(dockButtons).toHaveLength(2);
-    expect(Array.from(dockButtons).map((button) => button.getAttribute("aria-label"))).toEqual(["Scan / QR", "More"]);
-    fireEvent.click(screen.getByRole("button", { name: "Scan / QR" }));
-    expect(await screen.findByRole("dialog", { name: "QR mode" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Generate QR" }));
+    expect(Array.from(dockButtons).map((button) => button.getAttribute("aria-label"))).toEqual(["My attendance QR", "More"]);
+    fireEvent.click(screen.getByRole("button", { name: "My attendance QR" }));
+    expect(await screen.findByRole("dialog", { name: "My attendance QR" })).toBeInTheDocument();
     expect(view.container.querySelector(".qr-mode-code-panel svg")).toBeInTheDocument();
   });
 

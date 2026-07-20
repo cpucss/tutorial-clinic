@@ -13,6 +13,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+if (supabaseUrl.includes("supabase.com/dashboard")) {
+  throw new Error(
+    "Invalid VITE_SUPABASE_URL. Use https://YOUR_PROJECT_REF.supabase.co, not the Supabase Dashboard URL."
+  );
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,

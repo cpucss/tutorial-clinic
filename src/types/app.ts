@@ -5,12 +5,11 @@ export type UserRole = "student" | "contributor" | "admin";
 export type DemoAccountSetup = {
   completed: boolean;
   skipped?: boolean;
-  backupEmail?: string;
-  demoPassword?: string;
   completedAt?: string;
 };
 export type DemoUser = {
   id: string;
+  authUserId?: string;
   name: string;
   studentId: string;
   yearLevel: YearLevel;

@@ -11,9 +11,6 @@ export const authService = {
   getCurrentStudent(state: DemoState): DemoUser | undefined {
     return state.users.find((user) => user.id === state.currentUserId);
   },
-  setBackupEmailAndPassword(user: DemoUser, backupEmail: string, password: string): DemoUser {
-    return { ...user, accountSetup: { completed: true, backupEmail, demoPassword: password, completedAt: new Date().toISOString() } };
-  },
 };
 
 export const studentService = {

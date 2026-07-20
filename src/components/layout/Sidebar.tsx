@@ -21,6 +21,7 @@ import {
   LifeBuoy,
   Activity,
   LayoutGrid,
+  QrCode,
   ScanLine,
   X,
 } from "lucide-react";
@@ -302,9 +303,9 @@ export function Sidebar({
       </div>
 
       <nav className="mobile-nav-bar" aria-label="Mobile navigation">
-        <button className="mobile-nav-button mobile-nav-qr" type="button" onClick={onQrMode} aria-label="Scan / QR" aria-haspopup="dialog">
-          <span className="mobile-nav-action-icon"><ScanLine size={21} strokeWidth={2} /></span>
-          <span>Scan / QR</span>
+        <button className="mobile-nav-button mobile-nav-qr" type="button" onClick={onQrMode} aria-label={canSeeAdmin ? "Scan student QR" : "My attendance QR"} aria-haspopup="dialog">
+          <span className="mobile-nav-action-icon">{canSeeAdmin ? <ScanLine size={21} strokeWidth={2} /> : <QrCode size={21} strokeWidth={2} />}</span>
+          <span>{canSeeAdmin ? "Scan student QR" : "My QR"}</span>
         </button>
         <button className={`mobile-nav-button mobile-nav-hub ${moreOpen ? "is-active" : ""}`} type="button" onClick={() => setMoreOpen(true)} aria-label="More" aria-haspopup="dialog" aria-expanded={moreOpen}>
           <span className="mobile-nav-action-icon"><LayoutGrid size={21} strokeWidth={2} /></span>

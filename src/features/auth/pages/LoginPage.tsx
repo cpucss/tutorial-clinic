@@ -22,8 +22,8 @@ export function LoginPage() {
     // 1. Authenticate against Supabase Database
     const { data: authData, profile, error: authError } = await signInStudent(studentId, password);
 
-    if (authError) {
-      setError(authError);
+    if (authError || !authData?.user) {
+      setError(authError ?? "Supabase did not return an authenticated user.");
       setLoading(false);
       return;
     }
@@ -35,7 +35,7 @@ export function LoginPage() {
     }
 
     // 3. If Supabase approves, sign them into the local frontend state
-    const result = login(studentId, profile?.name, profile?.role ?? undefined);
+    const result = login(studentId, profile?.name, profile?.role ?? undefined, authData.user.id);
     if (!result.ok) {
       setError(result.message || "Failed to load student profile.");
     }

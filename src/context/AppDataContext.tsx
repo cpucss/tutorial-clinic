@@ -2,7 +2,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import { queueMutation } from "../offline/outboxRepository";
 import { setupAutoSync } from "../sync/syncEngine";
 import { getSessions } from "../services/supabase/sessionRepository";
-import { getAttendance } from "../services/supabase/attendanceRepository";
+import {
+  getAttendance,
+  moderateAttendance as moderateAttendanceInSupabase,
+  submitAttendance as submitAttendanceToSupabase,
+} from "../services/supabase/attendanceRepository";
+import { updatePassword } from "../services/supabase/authAdapter";
+import { getProfiles } from "../services/supabase/profileRepository";
 
 import { createSeedState, defaultPreferences, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
 import yearLevelMap from "../data/year_level_map.json";
@@ -25,7 +31,7 @@ type Result = { ok: true; message?: string } | { ok: false; message: string };
 export type AppDataAction =
   | { type: "LOGIN"; userId: string }
   | { type: "LOGOUT" }
-  | { type: "COMPLETE_SETUP"; userId: string; backupEmail: string; password: string }
+  | { type: "COMPLETE_SETUP"; userId: string; skipped: boolean }
   | { type: "UPSERT_EVENT"; event: DemoEvent }
   | { type: "DELETE_EVENT"; eventId: string }
   | { type: "TOGGLE_RSVP"; userId: string; eventId: string }
@@ -68,21 +74,18 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
     case "LOGOUT":
       return { ...state, currentUserId: null };
     case "COMPLETE_SETUP": {
-      const isSkipped = !action.password;
       return {
         ...state,
         users: state.users.map((user) => user.id === action.userId ? {
           ...user,
           accountSetup: {
-            completed: !isSkipped,
-            skipped: isSkipped,
-            backupEmail: isSkipped ? undefined : action.backupEmail,
-            demoPassword: isSkipped ? undefined : action.password,
-            completedAt: isSkipped ? undefined : new Date().toISOString(),
+            completed: !action.skipped,
+            skipped: action.skipped,
+            completedAt: action.skipped ? undefined : new Date().toISOString(),
           },
         } : user),
-        notifications: isSkipped ? state.notifications : [
-          notification(action.userId, "Account setup complete", "Your account setup was saved on this device.", "Account", "settings"),
+        notifications: action.skipped ? state.notifications : [
+          notification(action.userId, "Account setup complete", "Your password was updated through Supabase Auth.", "Account", "settings"),
           ...state.notifications,
         ],
       };
@@ -153,12 +156,18 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
       const exists = ids.includes(action.eventId);
       return { ...state, scheduleEventIds: { ...state.scheduleEventIds, [action.userId]: exists ? ids.filter((id) => id !== action.eventId) : [...ids, action.eventId] } };
     }
-    case "ADD_ATTENDANCE":
+    case "ADD_ATTENDANCE": {
+      const existing = state.attendance.some((record) => record.id === action.record.id);
       return {
         ...state,
-        attendance: [action.record, ...state.attendance],
-        notifications: [notification(action.record.userId, "Attendance submitted", "Your check-in is waiting for admin review.", "Attendance", "attendance-history"), ...state.notifications],
+        attendance: existing
+          ? state.attendance.map((record) => record.id === action.record.id ? action.record : record)
+          : [action.record, ...state.attendance],
+        notifications: existing
+          ? state.notifications
+          : [notification(action.record.userId, "Attendance submitted", "Your check-in is waiting for admin review.", "Attendance", "attendance-history"), ...state.notifications],
       };
+    }
     case "MODERATE_ATTENDANCE": {
       const record = state.attendance.find((item) => item.id === action.recordId);
       if (!record) return state;
@@ -263,15 +272,21 @@ function loadState(): DemoState {
     }
     // Correct yearLevel for all users from the authoritative map on startup
     parsed.users = parsed.users.map((user) => {
+      // Remove credentials left by older frontend-only demo versions.
+      const legacySetup = user.accountSetup as DemoUser["accountSetup"] & {
+        backupEmail?: string;
+        demoPassword?: string;
+      };
+      const { backupEmail: _backupEmail, demoPassword: _demoPassword, ...accountSetup } = legacySetup;
       // JSON keys are lowercase (e.g. "25-2018-23"), so we must match that case
       const baseId = user.studentId.toLowerCase().endsWith("-admin")
         ? user.studentId.toLowerCase().replace("-admin", "")
         : user.studentId.toLowerCase();
       const correctYear = (yearLevelMap as Record<string, string>)[baseId];
       if (correctYear && user.yearLevel !== correctYear) {
-        return { ...user, yearLevel: correctYear as any };
+        return { ...user, accountSetup, yearLevel: correctYear as any };
       }
-      return user;
+      return { ...user, accountSetup };
     });
     return parsed;
   } catch {
@@ -284,14 +299,15 @@ type AppDataContextValue = {
   currentUser: DemoUser | null;
   currentPoints: number;
   unreadCount: number;
-  login: (studentId: string, name?: string, supabaseRole?: string) => Result;
+  login: (studentId: string, name?: string, supabaseRole?: string, authUserId?: string) => Result;
   logout: () => void;
-  completeAccountSetup: (backupEmail: string, password: string, skip?: boolean) => Result;
+  completeAccountSetup: (password: string, skip?: boolean) => Promise<Result>;
   saveEvent: (input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity" | "instructor">) => Result;
   deleteEvent: (eventId: string) => void;
   toggleRsvp: (eventId: string) => Result;
   toggleSchedule: (eventId: string) => Result;
   submitAttendance: (eventId: string, code: string, method?: "Code" | "QR") => Result;
+  recordStudentQrAttendance: (eventId: string, studentId: string, authUserId: string) => Promise<Result>;
   moderateAttendance: (recordId: string, status: "Approved" | "Rejected", note?: string) => Result;
   saveNote: (input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">, submit?: boolean) => Result & { noteId?: string };
   moderateNote: (noteId: string, status: "Approved" | "Rejected", reason?: string) => Result;
@@ -342,25 +358,53 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
     setHasFetchedLive(true);
 
-    // Fetch sessions and merge into state
-    getSessions().then(({ data }) => {
-      if (!data) return;
-      data.forEach((event) => dispatch({ type: "UPSERT_EVENT", event }));
-    }).catch(console.error);
+    async function hydrate() {
+      const { data: sessions } = await getSessions();
+      sessions?.forEach((event) => dispatch({ type: "UPSERT_EVENT", event }));
 
-    // Fetch this user's attendance records and merge into state
-    getAttendance(currentUser.studentId).then(({ data }) => {
-      if (!data) return;
-      data.forEach((record) => dispatch({ type: "ADD_ATTENDANCE", record }));
-    }).catch(console.error);
-  }, [currentUser, hasFetchedLive]);
+      let roster = state.users;
+      if (currentUser!.role === "admin") {
+        const { data: profiles } = await getProfiles();
+        if (profiles) {
+          const hydratedUsers = profiles.map((profile) => {
+            const existing = state.users.find((user) => user.authUserId === profile.id || user.studentId.toUpperCase() === profile.studentId);
+            return {
+              id: existing?.id ?? profile.id,
+              authUserId: profile.id,
+              name: profile.name,
+              studentId: profile.studentId,
+              yearLevel: profile.yearLevel,
+              email: existing?.email ?? `${profile.studentId.toLowerCase()}@cpucss.edu.ph`,
+              program: existing?.program ?? "Computer Science",
+              section: existing?.section ?? "",
+              role: profile.role,
+              active: existing?.active ?? true,
+              accountSetup: existing?.accountSetup ?? { completed: true },
+            } satisfies DemoUser;
+          });
+          hydratedUsers.forEach((user) => dispatch({ type: "UPDATE_USER", user }));
+          roster = [...state.users.filter((user) => !hydratedUsers.some((item) => item.id === user.id)), ...hydratedUsers];
+        }
+      }
+
+      const { data: attendance } = await getAttendance(currentUser!.role === "admin" ? undefined : (currentUser!.authUserId ?? currentUser!.id));
+      attendance?.forEach((record) => {
+        const localUser = currentUser!.role === "admin"
+          ? roster.find((user) => user.authUserId === record.userId)
+          : currentUser!;
+        if (localUser) dispatch({ type: "ADD_ATTENDANCE", record: { ...record, userId: localUser.id } });
+      });
+    }
+
+    hydrate().catch(console.error);
+  }, [currentUser, hasFetchedLive, state.users]);
 
   // Reset fetch flag on logout so next login re-fetches fresh data
   useEffect(() => {
     if (!currentUser) setHasFetchedLive(false);
   }, [currentUser]);
 
-  const login = useCallback((studentId: string, name?: string, supabaseRole?: string): Result => {
+  const login = useCallback((studentId: string, name?: string, supabaseRole?: string, authUserId?: string): Result => {
     const normalized = studentId.trim().toUpperCase();
     if (!normalized) return { ok: false, message: "Student ID is required." };
 
@@ -378,6 +422,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       const yearLevel = (yearLevelMap as Record<string, string>)[baseId] ?? "Freshman";
       const newUser: DemoUser = {
         id: `stu-${Date.now()}`,
+        authUserId,
         studentId: normalized,
         name: name || "Verified Student",
         email: `${normalized.toLowerCase()}@cpucss.edu.ph`,
@@ -398,6 +443,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       const correctYear = (yearLevelMap as Record<string, string>)[baseId] ?? "Freshman";
       let updatedUser = { ...user };
       let changed = false;
+      if (authUserId && user.authUserId !== authUserId) {
+        updatedUser.authUserId = authUserId;
+        changed = true;
+      }
       if (user.yearLevel !== correctYear) {
         updatedUser.yearLevel = correctYear as any;
         changed = true;
@@ -422,15 +471,18 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return { ok: true };
   }, [state.users]);
 
-  const completeAccountSetup = useCallback((backupEmail: string, password: string, skip = false): Result => {
+  const completeAccountSetup = useCallback(async (password: string, skip = false): Promise<Result> => {
     if (!currentUser) return { ok: false, message: "No student is signed in." };
-    if (!skip) {
-      if (currentUser.role !== "admin") {
-        if (!backupEmail.trim().toLowerCase().endsWith("@cpu.edu.ph")) return { ok: false, message: "Please enter a valid @cpu.edu.ph email address." };
-      }
-      if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) return { ok: false, message: "Password does not meet all requirements." };
+    if (skip) {
+      dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: true });
+      return { ok: true };
     }
-    dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, backupEmail: currentUser.role === "admin" ? "" : backupEmail.trim(), password });
+
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) return { ok: false, message: "Password does not meet all requirements." };
+    const result = await updatePassword(password);
+    if (result.error) return { ok: false, message: result.error };
+
+    dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: false });
     return { ok: true };
   }, [currentUser]);
 
@@ -503,6 +555,38 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return { ok: true, message: "Attendance submitted for admin approval." };
   }, [currentUser, state.attendance, state.events]);
 
+  const recordStudentQrAttendance = useCallback(async (eventId: string, studentId: string, authUserId: string): Promise<Result> => {
+    if (!currentUser || currentUser.role !== "admin") return { ok: false, message: "Admin access is required." };
+    const event = state.events.find((item) => item.id === eventId);
+    if (!event) return { ok: false, message: "Select a valid session before scanning." };
+    const student = state.users.find((item) => item.studentId.toUpperCase() === studentId.toUpperCase() && item.role !== "admin" && item.active);
+    if (!student) return { ok: false, message: "This student is not available in the authenticated roster." };
+    if (student.authUserId && student.authUserId !== authUserId) return { ok: false, message: "The QR identity does not match the student profile." };
+    if (state.attendance.some((item) => item.eventId === eventId && item.userId === student.id && item.status !== "Rejected")) return { ok: false, message: "This student already has attendance for the selected session." };
+
+    const minutes = (Date.now() - new Date(event.date).getTime()) / 60000;
+    const arrival = minutes < -10 ? "Early" : minutes <= 10 ? "On time" : "Late";
+    const remote = await submitAttendanceToSupabase(eventId, authUserId, "QR", arrival);
+    if (remote.error || !remote.data?.id) return { ok: false, message: remote.error?.message ?? "Supabase could not create the attendance record." };
+
+    const record: AttendanceRecord = {
+      id: remote.data.id,
+      eventId,
+      userId: student.id,
+      checkedInAt: remote.data.scanned_at ?? new Date().toISOString(),
+      method: "QR",
+      arrival,
+      status: "Pending",
+    };
+    dispatch({ type: "ADD_ATTENDANCE", record });
+
+    const approval = await moderateAttendanceInSupabase(record.id, "Approved");
+    if (approval.error) return { ok: false, message: approval.error.message ?? "Attendance was recorded but still needs approval." };
+
+    dispatch({ type: "MODERATE_ATTENDANCE", recordId: record.id, status: "Approved", reviewerId: currentUser.id });
+    return { ok: true, message: `${student.name}'s attendance was recorded and approved.` };
+  }, [currentUser, state.attendance, state.events, state.users]);
+
   const moderateAttendance = useCallback((recordId: string, status: "Approved" | "Rejected", note?: string): Result => {
     if (!currentUser || currentUser.role !== "admin") return { ok: false, message: "Admin access is required." };
     if (status === "Rejected" && !note?.trim()) return { ok: false, message: "Add a reason or correction note." };
@@ -564,13 +648,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AppDataContextValue>(() => ({
     state, currentUser, currentPoints, unreadCount, login, logout: () => dispatch({ type: "LOGOUT" }), completeAccountSetup,
-    saveEvent, deleteEvent: (eventId) => dispatch({ type: "DELETE_EVENT", eventId }), toggleRsvp, toggleSchedule, submitAttendance, moderateAttendance,
+    saveEvent, deleteEvent: (eventId) => dispatch({ type: "DELETE_EVENT", eventId }), toggleRsvp, toggleSchedule, submitAttendance, recordStudentQrAttendance, moderateAttendance,
     saveNote, moderateNote, toggleFavourite, markNotification: (id, read = true) => dispatch({ type: "MARK_NOTIFICATION", id, read }),
     markAllNotifications: () => currentUser && dispatch({ type: "MARK_ALL_NOTIFICATIONS", userId: currentUser.id }), deleteNotification: (id) => dispatch({ type: "DELETE_NOTIFICATION", id }),
     clearNotifications: () => currentUser && dispatch({ type: "CLEAR_NOTIFICATIONS", userId: currentUser.id }), saveSubject, deleteSubject,
     saveUser: (user) => dispatch({ type: "UPDATE_USER", user }), adjustPoints, markAnnouncementRead: (announcementId) => currentUser && dispatch({ type: "MARK_ANNOUNCEMENT", announcementId, userId: currentUser.id }),
     updatePreferences: (preferences) => currentUser && dispatch({ type: "UPDATE_PREFERENCES", userId: currentUser.id, preferences }),
-  }), [adjustPoints, completeAccountSetup, currentPoints, currentUser, deleteSubject, login, moderateAttendance, moderateNote, saveEvent, saveNote, saveSubject, state, submitAttendance, toggleFavourite, toggleRsvp, toggleSchedule, unreadCount]);
+  }), [adjustPoints, completeAccountSetup, currentPoints, currentUser, deleteSubject, login, moderateAttendance, moderateNote, recordStudentQrAttendance, saveEvent, saveNote, saveSubject, state, submitAttendance, toggleFavourite, toggleRsvp, toggleSchedule, unreadCount]);
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
 }
