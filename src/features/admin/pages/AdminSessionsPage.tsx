@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CalendarPlus, ChevronDown, ChevronRight, Download, Eye, Pencil, Search, Trash2, X } from "lucide-react";
+import { CalendarPlus, Download, Eye, Pencil, Search, Trash2, X } from "lucide-react";
 import { ConfirmDialog, EmptyState, InlineNotice, StatusBadge } from "../../../components/common/Feedback";
 import type { ToastMessage } from "../../../components/common/Feedback";
 import { effectiveEventStatus, getRsvpCount, useAppData } from "../../../context/AppDataContext";
@@ -14,83 +14,6 @@ const YEAR_GROUPS: { label: string; levels: YearLevel[] }[] = [
   { label: "Third Year",  levels: ["Junior"] },
   { label: "Fourth Year", levels: ["Senior"] },
 ];
-
-// ─── Grouped subject picker ───────────────────────────────────────────────────
-function SubjectPicker({
-  subjects,
-  value,
-  onChange,
-}: {
-  subjects: Subject[];
-  value: string;
-  onChange: (id: string) => void;
-}) {
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
-
-  // pre-select the group that contains the current value on mount
-  useMemo(() => {
-    const current = subjects.find((s) => s.id === value);
-    if (!current) return;
-    const group = YEAR_GROUPS.find((g) => g.levels.includes(current.yearLevel as YearLevel));
-    if (group) setOpenGroup(group.label);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const selectedSubject = subjects.find((s) => s.id === value);
-
-  return (
-    <div className="subject-picker">
-      {/* Summary of current selection */}
-      {selectedSubject && (
-        <div className="subject-picker-selected">
-          <span className="subject-code">{selectedSubject.code}</span>
-          <span className="subject-name">{selectedSubject.name}</span>
-        </div>
-      )}
-
-      {/* Accordion groups */}
-      <div className="subject-picker-groups">
-        {YEAR_GROUPS.map((group) => {
-          const groupSubjects = subjects.filter((s) =>
-            group.levels.includes(s.yearLevel as YearLevel)
-          );
-          if (!groupSubjects.length) return null;
-          const isOpen = openGroup === group.label;
-          return (
-            <div key={group.label} className="subject-group">
-              <button
-                type="button"
-                className="subject-group-header"
-                onClick={() => setOpenGroup(isOpen ? null : group.label)}
-                aria-expanded={isOpen}
-              >
-                {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span>{group.label}</span>
-                <span className="subject-group-count">{groupSubjects.length}</span>
-              </button>
-              {isOpen && (
-                <ul className="subject-group-list" role="listbox">
-                  {groupSubjects.map((sub) => (
-                    <li
-                      key={sub.id}
-                      role="option"
-                      aria-selected={sub.id === value}
-                      className={`subject-option${sub.id === value ? " selected" : ""}`}
-                      onClick={() => onChange(sub.id)}
-                    >
-                      <span className="subject-code">{sub.code}</span>
-                      <span className="subject-name">{sub.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export function AdminSessionsPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage, "id">) => void }) {
@@ -232,7 +155,7 @@ export function AdminSessionsPage({ onNotify }: { onNotify?: (toast: Omit<ToastM
                       <td>
                         <strong>{event.title}</strong>
                         <small>
-                          {sub ? `${sub.code}: ${sub.name}` : event.subjectId} — {event.venue}
+                          {sub ? `${sub.code}: ${sub.name}` : event.subjectId} — Room: {event.venue}
                         </small>
                       </td>
                       <td>{formatDateTime(event.date)}</td>
@@ -421,15 +344,25 @@ function SessionEditor({
             <input value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
 
-          {/* Subject — grouped accordion picker */}
-          <div className="form-field md:col-span-2">
-            <span className="form-label">Subject</span>
-            <SubjectPicker
-              subjects={state.subjects}
-              value={subjectId}
-              onChange={setSubjectId}
-            />
-          </div>
+          {/* Subject */}
+          <label className="form-field md:col-span-2">
+            <span>Subject</span>
+            <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+              {YEAR_GROUPS.map((group) => {
+                const groupSubjects = state.subjects.filter((s) => group.levels.includes(s.yearLevel as YearLevel));
+                if (!groupSubjects.length) return null;
+                return (
+                  <optgroup key={group.label} label={group.label}>
+                    {groupSubjects.map((sub) => (
+                      <option key={sub.id} value={sub.id}>
+                        {sub.code}: {sub.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            </select>
+          </label>
 
           {/* Status */}
           <label className="form-field">
@@ -451,10 +384,10 @@ function SessionEditor({
             <input type="datetime-local" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           </label>
 
-          {/* Venue */}
+          {/* Room */}
           <label className="form-field">
-            <span>Venue</span>
-            <input value={venue} onChange={(e) => setVenue(e.target.value)} />
+            <span>Room</span>
+            <input value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="e.g. MT102" />
           </label>
 
           {/* Instructor — only shown when editing an existing session */}
@@ -575,7 +508,7 @@ function SessionDetails({ event, onClose }: { event: DemoEvent; onClose: () => v
             </dd>
           </div>
           <div>
-            <dt>Venue</dt>
+            <dt>Room</dt>
             <dd>{event.venue}</dd>
           </div>
           <div>
