@@ -9,6 +9,7 @@ import {
 } from "../services/supabase/attendanceRepository";
 import { updatePassword } from "../services/supabase/authAdapter";
 import { getProfiles } from "../services/supabase/profileRepository";
+import { supabase } from "../services/supabase/client";
 
 import { createSeedState, defaultPreferences, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
 import yearLevelMap from "../data/year_level_map.json";
@@ -350,6 +351,18 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     const cleanup = setupAutoSync(currentUser.id);
     return cleanup;
   }, [currentUser?.id]);
+
+  // ── Silently patch authUserId from the active Supabase session if missing.
+  // This fixes the "Sign in again" warning for users already logged in before
+  // the QR workflow was deployed — no forced re-login required.
+  useEffect(() => {
+    if (!currentUser || currentUser.authUserId) return;
+    supabase.auth.getSession().then(({ data }) => {
+      const uid = data.session?.user?.id;
+      if (!uid) return;
+      dispatch({ type: "UPDATE_USER", user: { ...currentUser, authUserId: uid } });
+    });
+  }, [currentUser]);
 
   // ── Fetch live data from Supabase and hydrate local state on login
   const [hasFetchedLive, setHasFetchedLive] = useState(false);
