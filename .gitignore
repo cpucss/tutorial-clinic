@@ -22,6 +22,11 @@ dist-ssr
 enrolled_students.json
 src/data/enrolled_students.json
 scripts/seed_supabase.js
+scripts/update_profiles.js
+student_names.json
+src/data/student_names.json
+admin_list.json
+src/data/admin_list.json
 *.pdf
 *.csv
 
@@ -35,3 +40,4 @@ scripts/seed_supabase.js
 *.njsproj
 *.sln
 *.sw?
+node_modules/.vite
