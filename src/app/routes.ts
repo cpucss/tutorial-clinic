@@ -21,7 +21,6 @@ export const TAB_PATHS: Record<TabKey, string> = {
   "admin-sessions": "/admin/sessions",
   "admin-notes": "/admin/notes",
   "admin-students": "/admin/students",
-  "admin-subjects": "/admin/subjects",
 };
 
 const PATH_TABS = Object.entries(TAB_PATHS).reduce<Record<string, TabKey>>(
