@@ -49,8 +49,7 @@ export type TabKey =
   | "admin-attendance"
   | "admin-sessions"
   | "admin-notes"
-  | "admin-students"
-  | "admin-subjects";
+  | "admin-students";
 
 type NavItem = {
   key: TabKey;
@@ -151,11 +150,6 @@ const adminItems: NavItem[] = [
     key: "admin-students",
     label: "Admin Students",
     icon: <UsersRound size={18} strokeWidth={1.75} />,
-  },
-  {
-    key: "admin-subjects",
-    label: "Admin Subjects",
-    icon: <NotebookTabs size={18} strokeWidth={1.75} />,
   },
 ];
 
