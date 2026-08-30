@@ -27,9 +27,9 @@ export function AttendanceHistoryPage({ onNotify }: { onNotify?: (toast: Omit<To
           <div>
             <div className="section-kicker">Participation</div>
             <h1 className="page-heading">Attendance</h1>
-            <p className="page-description">Show your personal QR to an administrator and track your recorded attendance.</p>
+            <p className="page-description">Show your personal QR to an administrator or enter a session code to record your attendance.</p>
           </div>
-          <button className="primary-button" type="button" onClick={() => setView("my-qr")}><QrCode size={15} /> Show my QR</button>
+          <button className="primary-button" type="button" onClick={() => setView("my-qr")}><QrCode size={15} /> Check in to session</button>
         </header>
 
         <section className="mt-7 grid gap-3 sm:grid-cols-4">
@@ -50,7 +50,7 @@ export function AttendanceHistoryPage({ onNotify }: { onNotify?: (toast: Omit<To
               return <li key={record.id} className="history-row"><div><div className="font-bold">{event?.title ?? "Removed session"}</div><div className="mt-1 text-xs text-[#6F6F6F]">Checked in {formatDateTime(record.checkedInAt)} - {record.method} - {record.arrival}</div>{record.correctionNote && <div className="mt-2 text-xs text-[#B94B35]">Admin note: {record.correctionNote}</div>}</div><div className="flex items-center gap-3"><StatusBadge status={record.status} />{record.status === "Approved" && <strong className="text-[#9A5D0B]">+40</strong>}</div></li>;
             })}</ul>
           ) : (
-            <div className="p-5"><EmptyState title="No attendance records" body="Attendance recorded by an administrator will appear here." actionLabel="Show my QR" onAction={() => setView("my-qr")} /></div>
+            <div className="p-5"><EmptyState title="No attendance records" body="Attendance recorded by an administrator will appear here." actionLabel="Check in to session" onAction={() => setView("my-qr")} /></div>
           )}
         </section>
       </div>

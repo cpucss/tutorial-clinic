@@ -92,7 +92,7 @@ export function AdminAttendancePage({ onNotify }: { onNotify?: (toast: Omit<Toas
         <div className="confirm-overlay qr-mode-overlay" onMouseDown={() => setScannerOpen(false)}>
           <section className="qr-mode-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-qr-title" onMouseDown={(event) => event.stopPropagation()}>
             <header className="qr-mode-header">
-              <div><div className="section-kicker">Attendance</div><h2 id="admin-qr-title">Scan student QR</h2><p>Select the session first, then scan the student's personal code.</p></div>
+              <div><div className="section-kicker">Attendance</div><h2 id="admin-qr-title">Scan student QR</h2><p>Select the session first, then scan the student's personal QR.</p></div>
               <button className="icon-button rounded-full bg-[#FAF8F2]" type="button" onClick={() => setScannerOpen(false)} aria-label="Close student QR scanner"><X size={17} /></button>
             </header>
             <AdminStudentQrScanner onNotify={onNotify} />

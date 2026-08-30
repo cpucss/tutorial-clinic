@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, CameraOff, CheckCircle2, QrCode, RefreshCw, ScanLine } from "lucide-react";
+import { AlertCircle, Camera, CameraOff, CheckCircle2, QrCode, RefreshCw, ScanLine, WifiOff } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { InlineNotice, LoadingLabel, StatusBadge } from "../../../components/common/Feedback";
@@ -20,27 +20,53 @@ export function StudentAttendanceQr({ onNotify }: { onNotify?: (toast: Omit<Toas
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [isOffline, setIsOffline] = useState(() => !navigator.onLine);
 
-  async function fetchNewToken() {
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  async function fetchNewToken(isManualRefresh = false) {
+    if (!navigator.onLine) {
+      setLoading(false);
+      setToken(null);
+      setExpiresAt(null);
+      setError("You are currently offline. Generating a new attendance QR requires an active internet connection.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       const res = await issueAttendanceQr();
       if (res.error || !res.token) {
-        // Fallback for isolated offline/demo mode
-        const demoToken = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
-        const demoExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-        setToken(demoToken);
-        setExpiresAt(demoExpiry);
+        setToken(null);
+        setExpiresAt(null);
+        setError(res.error || "Failed to generate attendance QR from server. Please try again.");
       } else {
         setToken(res.token);
         setExpiresAt(res.expiresAt);
+        setError(null);
+        if (isManualRefresh) {
+          onNotify?.({
+            tone: "info",
+            title: "New QR generated",
+            description: "Your previous attendance QR has been invalidated.",
+          });
+        }
       }
-    } catch {
-      const demoToken = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
-      const demoExpiry = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-      setToken(demoToken);
-      setExpiresAt(demoExpiry);
+    } catch (err: unknown) {
+      setToken(null);
+      setExpiresAt(null);
+      const message = err instanceof Error ? err.message : "Unable to reach server to generate attendance QR.";
+      setError(message);
     } finally {
       setLoading(false);
       setNow(Date.now());
@@ -53,6 +79,7 @@ export function StudentAttendanceQr({ onNotify }: { onNotify?: (toast: Omit<Toas
     return () => {
       window.clearInterval(timer);
       setToken(null);
+      setExpiresAt(null);
     };
   }, []);
 
@@ -62,15 +89,6 @@ export function StudentAttendanceQr({ onNotify }: { onNotify?: (toast: Omit<Toas
   const isExpired = expiryMs > 0 && now >= expiryMs;
   const secondsRemaining = Math.max(0, Math.ceil((expiryMs - now) / 1000));
 
-  async function handleRefresh() {
-    await fetchNewToken();
-    onNotify?.({
-      tone: "info",
-      title: "New QR generated",
-      description: "Your previous attendance QR has been invalidated.",
-    });
-  }
-
   return (
     <div className="qr-mode-content">
       <div className="qr-generator-summary">
@@ -79,7 +97,9 @@ export function StudentAttendanceQr({ onNotify }: { onNotify?: (toast: Omit<Toas
           <span>{currentUser.studentId}</span>
         </div>
         {loading ? (
-          <StatusBadge status="Generating token..." />
+          <StatusBadge status="Requesting QR..." />
+        ) : error || isOffline ? (
+          <StatusBadge status="Unavailable" />
         ) : isExpired ? (
           <StatusBadge status="QR Expired" />
         ) : (
@@ -92,33 +112,66 @@ export function StudentAttendanceQr({ onNotify }: { onNotify?: (toast: Omit<Toas
           <div className="flex flex-col items-center justify-center p-12 text-gray-500">
             <LoadingLabel label="Requesting server token..." />
           </div>
+        ) : error || isOffline ? (
+          <div className="flex flex-col items-center justify-center p-8 text-center text-gray-500">
+            {isOffline ? <WifiOff size={36} className="text-amber-500 mb-2" /> : <AlertCircle size={36} className="text-red-500 mb-2" />}
+            <p className="text-sm font-semibold text-gray-800">
+              {isOffline ? "Internet Connection Required" : "Unable to Generate QR"}
+            </p>
+            <p className="mt-1 text-xs text-gray-500 max-w-xs">
+              {error || "An active internet connection is required to issue a secure single-use attendance QR."}
+            </p>
+            <button
+              className="primary-button mt-4"
+              type="button"
+              onClick={() => fetchNewToken(false)}
+              disabled={loading}
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Retry
+            </button>
+          </div>
         ) : token && !isExpired ? (
           <QRCodeSVG
             value={token}
             size={240}
             level="M"
             marginSize={2}
-            title={`Attendance QR for ${currentUser.name}`}
+            title="Attendance QR"
           />
         ) : (
           <div className="flex flex-col items-center justify-center p-8 text-center text-gray-500">
-            <p className="text-sm font-medium text-red-600">This attendance code has expired.</p>
-            <p className="mt-1 text-xs text-gray-400">Generate a new QR token to check in.</p>
+            <p className="text-sm font-semibold text-red-600">This attendance QR has expired.</p>
+            <p className="mt-1 text-xs text-gray-500">Generate a new QR token to check in.</p>
+            <button
+              className="primary-button mt-4"
+              type="button"
+              onClick={() => fetchNewToken(true)}
+              disabled={loading}
+            >
+              <RefreshCw size={14} /> Generate new QR
+            </button>
           </div>
         )}
       </div>
 
-      {error && <InlineNotice tone="error" title="QR generation notice">{error}</InlineNotice>}
+      {token && !isExpired && (
+        <>
+          <InlineNotice tone="info" title="Show this QR to an administrator">
+            The administrator will select the session and scan this QR to record your attendance. Generating a new QR invalidates any previous token.
+          </InlineNotice>
 
-      <InlineNotice tone="info" title="Show this QR to an administrator">
-        The administrator will select the session, scan this code, and record your attendance.
-      </InlineNotice>
-
-      <div className="qr-mode-actions">
-        <button className="secondary-button" type="button" onClick={handleRefresh} disabled={loading}>
-          <RefreshCw size={15} /> Generate new QR
-        </button>
-      </div>
+          <div className="qr-mode-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => fetchNewToken(true)}
+              disabled={loading}
+            >
+              <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Generate new QR
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -163,9 +216,15 @@ export function AdminStudentQrScanner({ onNotify }: { onNotify?: (toast: Omit<To
   }, [eventId, sessions]);
 
   async function recognize(value: string): Promise<boolean> {
+    if (saving) return false;
     const rawToken = value.trim();
     if (!isValidOpaqueQrToken(rawToken)) {
       setNotice({ tone: "error", title: "Unsupported QR", body: "Scan a valid cryptographic token issued by Tutorial Clinic." });
+      return false;
+    }
+
+    if (!eventId) {
+      setNotice({ tone: "warning", title: "Session required", body: "Please select an active session before scanning attendance." });
       return false;
     }
 
@@ -191,6 +250,7 @@ export function AdminStudentQrScanner({ onNotify }: { onNotify?: (toast: Omit<To
       }
       onNotify?.({ tone: "success", title: "Attendance recorded", description: result.message });
     } else {
+      setScannedStudent(null);
       setNotice({
         tone: "error",
         title: "Attendance not recorded",
@@ -203,10 +263,15 @@ export function AdminStudentQrScanner({ onNotify }: { onNotify?: (toast: Omit<To
   }
 
   async function startCamera() {
+    if (!eventId || !sessions.length) {
+      setNotice({ tone: "warning", title: "Session required", body: "Select a session before starting the camera." });
+      return;
+    }
+
     const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
     if (!navigator.mediaDevices?.getUserMedia || !Detector) {
       setCameraState("unsupported");
-      setNotice({ tone: "warning", title: "Scanner unavailable", body: "Use a Chromium browser with camera access on HTTPS or localhost." });
+      setNotice({ tone: "warning", title: "Scanner unavailable", body: "Use a modern browser with camera access on HTTPS or localhost." });
       return;
     }
     setCameraState("starting");
@@ -236,11 +301,12 @@ export function AdminStudentQrScanner({ onNotify }: { onNotify?: (toast: Omit<To
     } catch {
       releaseCamera();
       setCameraState("denied");
-      setNotice({ tone: "warning", title: "Camera access blocked", body: "Allow camera access in the browser settings, then try again." });
+      setNotice({ tone: "warning", title: "Camera access blocked", body: "Allow camera access in browser settings, then try again." });
     }
   }
 
   function reset() {
+    releaseCamera();
     setScannedToken(null);
     setScannedStudent(null);
     setNotice({
@@ -256,6 +322,7 @@ export function AdminStudentQrScanner({ onNotify }: { onNotify?: (toast: Omit<To
         <span>Session</span>
         <select
           value={eventId}
+          disabled={saving || cameraState === "active"}
           onChange={(event) => {
             setEventId(event.target.value);
             reset();
@@ -298,15 +365,23 @@ export function AdminStudentQrScanner({ onNotify }: { onNotify?: (toast: Omit<To
                   ? "QR scanning is not supported"
                   : cameraState === "denied"
                   ? "Camera permission was not granted"
+                  : saving
+                  ? "Verifying attendance..."
                   : "Scan student QR"}
               </strong>
               <p>Ask the student to open Attendance and show their personal QR.</p>
-              {cameraState === "idle" && (
-                <button className="primary-button" type="button" onClick={startCamera}>
+              {cameraState === "idle" && !saving && (
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={startCamera}
+                  disabled={!eventId || !sessions.length}
+                >
                   <ScanLine size={15} /> Start scanner
                 </button>
               )}
               {cameraState === "starting" && <StatusBadge status="Starting camera" />}
+              {saving && <StatusBadge status="Verifying with server..." />}
             </div>
           )}
           {cameraState === "active" && (
@@ -325,9 +400,9 @@ export function AdminStudentQrScanner({ onNotify }: { onNotify?: (toast: Omit<To
       </InlineNotice>
 
       <div className="qr-mode-actions">
-        {scannedToken && (
-          <button className="secondary-button" type="button" onClick={reset}>
-            Scan another
+        {(scannedToken || notice.tone === "error") && (
+          <button className="secondary-button" type="button" onClick={reset} disabled={saving}>
+            <RefreshCw size={14} /> Scan another
           </button>
         )}
       </div>

@@ -27,7 +27,7 @@ export function QrModeSheet({
           <div>
             <div className="section-kicker">Attendance</div>
             <h2 id="qr-mode-title">{isAdmin ? "Scan student QR" : "My attendance QR"}</h2>
-            <p>{isAdmin ? "Select a clinic session and scan the student's personal code." : "Show this personal code to the administrator recording attendance."}</p>
+            <p>{isAdmin ? "Select a clinic session and scan the student's personal QR." : "Show this personal QR to the administrator recording attendance."}</p>
           </div>
           <button ref={closeRef} className="icon-button rounded-full bg-[#FAF8F2]" type="button" onClick={onClose} aria-label="Close attendance QR"><X size={17} /></button>
         </header>

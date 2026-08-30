@@ -5,9 +5,16 @@ import { EmptyState, StatusBadge } from "../../../components/common/Feedback";
 import { getRsvpCount, getUserPoints, useAppData } from "../../../context/AppDataContext";
 import { formatDateTime, relativeTime } from "../../../utils/format";
 
-export function DashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => void }) {
+export function DashboardPage({
+  onNavigate,
+  onOpenQr,
+}: {
+  onNavigate?: (tab: TabKey) => void;
+  onOpenQr?: () => void;
+}) {
   const { state, currentUser, currentPoints, unreadCount } = useAppData();
   if (!currentUser) return null;
+  const isStudent = currentUser.role !== "admin";
   const approvedAttendance = state.attendance.filter((record) => record.userId === currentUser.id && record.status === "Approved");
   const attendanceTotal = state.attendance.filter((record) => record.userId === currentUser.id && record.status !== "Rejected").length;
   const attendanceRate = attendanceTotal ? Math.round((approvedAttendance.length / attendanceTotal) * 100) : 0;
@@ -62,6 +69,31 @@ export function DashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => vo
           </div>
         </section>
 
+        {isStudent && (
+          <section className="mt-5">
+            <div className="motion-card flex flex-col justify-between gap-4 rounded-xl bg-gradient-to-r from-[#1C1C1C] to-[#2D2D2D] p-5 text-white shadow-sm sm:flex-row sm:items-center demo-card">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/10 text-[#F5A623]">
+                  <QrCode size={26} />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold">Generate My QR</h2>
+                  <p className="text-xs text-white/70">
+                    Generate a secure five-minute QR for an administrator to scan.
+                  </p>
+                </div>
+              </div>
+              <button
+                className="motion-button inline-flex items-center justify-center gap-2 rounded-xl bg-[#F5A623] px-5 py-2.5 text-sm font-bold text-black shadow-sm transition hover:bg-[#E59819] shrink-0"
+                type="button"
+                onClick={onOpenQr ?? (() => onNavigate?.("attendance-history"))}
+              >
+                <QrCode size={16} /> Generate My QR
+              </button>
+            </div>
+          </section>
+        )}
+
         <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric icon={<Trophy />} label="Total points" value={String(currentPoints)} detail="View full point history" onClick={() => onNavigate?.("points-history")} />
           <Metric icon={<ClipboardCheck />} label="Attendance" value={`${attendanceRate}%`} detail={`${approvedAttendance.length} approved sessions`} onClick={() => onNavigate?.("attendance-history")} />
@@ -84,7 +116,7 @@ export function DashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => vo
         <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <Quick icon={<Calendar />} label="Browse Sessions" onClick={() => onNavigate?.("events")} />
           <Quick icon={<Star />} label="My Schedule" onClick={() => onNavigate?.("schedule")} />
-          <Quick icon={<QrCode />} label="Scan Attendance" onClick={() => onNavigate?.("attendance-history")} />
+          <Quick icon={<QrCode />} label={isStudent ? "Generate My QR" : "Attendance Review"} onClick={isStudent ? (onOpenQr ?? (() => onNavigate?.("attendance-history"))) : () => onNavigate?.("admin-attendance")} />
           <Quick icon={<BookOpen />} label="Upload Notes" onClick={() => onNavigate?.("my-notes")} />
           <Quick icon={<Trophy />} label="Leaderboard" onClick={() => onNavigate?.("leaderboard")} />
           <Quick icon={<Bell />} label="Notifications" onClick={() => onNavigate?.("notifications")} />
