@@ -1,10 +1,16 @@
 // Sync engine — pushes queued offline mutations to Supabase when connection is available.
 // Triggers on: app startup, browser online event, tab visibility change, and a 30s interval.
 
-import { getReadyMutations, markSyncing, removeMutation, markFailed, markConflict } from "../offline/outboxRepository";
+import {
+  getReadyMutations,
+  markSyncing,
+  removeMutation,
+  markFailed,
+  markConflict,
+} from "../offline/outboxRepository";
 import type { OutboxMutation } from "../offline/database";
-import { submitAttendance } from "../services/supabase/attendanceRepository";
-import { toggleRsvp } from "../services/supabase/sessionRepository";
+import { checkInWithCode } from "../services/supabase/attendanceRepository";
+import { setRsvp } from "../services/supabase/sessionRepository";
 
 let isSyncing = false;
 
@@ -22,11 +28,13 @@ function isPermanentError(error: unknown): boolean {
   return false;
 }
 
-// Processes the outbox queue. The applyMutation callback handles actual Supabase calls.
 export async function synchronize(
-  userId: string,
+  userId?: string,
   applyMutation: (mutation: OutboxMutation) => Promise<unknown> = defaultApplyMutation
 ): Promise<{ synced: number; failed: number }> {
+  if (typeof window === "undefined" || typeof indexedDB === "undefined") {
+    return { synced: 0, failed: 0 };
+  }
   if (isSyncing) return { synced: 0, failed: 0 };
   isSyncing = true;
 
@@ -34,7 +42,7 @@ export async function synchronize(
   let failed = 0;
 
   try {
-    const mutations = await getReadyMutations(userId);
+    const mutations = await getReadyMutations(userId || "");
 
     for (const mutation of mutations) {
       try {
@@ -64,7 +72,7 @@ export async function synchronize(
 
 // Registers automatic sync triggers. Returns a cleanup function.
 export function setupAutoSync(
-  userId: string,
+  userId?: string,
   applyMutation: (mutation: OutboxMutation) => Promise<unknown> = defaultApplyMutation
 ): () => void {
   const runSync = () => synchronize(userId, applyMutation);
@@ -90,17 +98,27 @@ export function setupAutoSync(
 // Routes outbox items to the correct Supabase API based on their entityType
 async function defaultApplyMutation(mutation: OutboxMutation): Promise<unknown> {
   const { entityType, payload } = mutation;
-  const p = payload as any; // Cast for dynamic property access
+  const p = payload as any;
 
   switch (entityType) {
     case "attendance":
-      // Calls our Supabase API
-      return await submitAttendance(p.sessionId, p.studentId);
-    
+      if (p.code && p.sessionId) {
+        const res = await checkInWithCode(p.sessionId, p.code);
+        if (res.error) throw new Error(res.error);
+        return res.data;
+      }
+      return null;
+
     case "rsvp":
-      // Calls our Supabase API
-      return await toggleRsvp(p.sessionId, p.studentId);
-    
+      // Calls deterministic set_rsvp RPC
+      if (p.sessionId !== undefined) {
+        const joined = p.joined !== undefined ? Boolean(p.joined) : true;
+        const res = await setRsvp(p.sessionId, joined);
+        if (res.error) throw new Error(res.error);
+        return res;
+      }
+      return null;
+
     default:
       console.warn(`Unsupported mutation type: ${entityType}`);
       return null;

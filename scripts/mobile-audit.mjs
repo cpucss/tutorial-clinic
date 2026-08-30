@@ -47,7 +47,7 @@ async function findBrowser() {
 }
 
 async function inspectRoute(page, baseUrl, route, viewportName) {
-  await page.goto(`${baseUrl}/#${route}`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/#${route}`, { waitUntil: "domcontentloaded" });
   await page.locator("#main-content").waitFor();
   await page.waitForTimeout(550);
 
@@ -125,7 +125,7 @@ async function inspectRoute(page, baseUrl, route, viewportName) {
 }
 
 async function signIn(page, baseUrl, studentId, viewportName) {
-  await page.goto(`${baseUrl}/#/login`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/#/login`, { waitUntil: "domcontentloaded" });
   if (viewportName === "phone-360") await page.screenshot({ path: path.join(outputDirectory, `${viewportName}-login.png`), fullPage: true });
   await page.getByLabel("Student ID").fill(studentId);
   await page.getByRole("button", { name: "Login" }).click();
@@ -145,20 +145,19 @@ async function assertMobileDock(page) {
   const buttons = dock.locator(":scope > button");
   if (await buttons.count() !== 2) throw new Error("Mobile navigation must contain only QR mode and the navigation hub.");
   const labels = await buttons.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label")));
-  if (!labels.includes("Scan / QR") || !labels.includes("More")) throw new Error(`Unexpected mobile navigation actions: ${labels.join(", ")}.`);
+  if (!labels.includes("My attendance QR") || !labels.includes("More")) throw new Error(`Unexpected mobile navigation actions: ${labels.join(", ")}.`);
 }
 
 async function auditInteractions(page, baseUrl, viewportName) {
-  await page.goto(`${baseUrl}/#/dashboard`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/#/dashboard`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(550);
   await assertMobileDock(page);
-  await page.getByRole("button", { name: "Scan / QR" }).click();
+  await page.getByRole("button", { name: "My attendance QR" }).click();
   await page.locator(".qr-mode-dialog").waitFor();
   await assertPanelFits(page, ".qr-mode-dialog", "QR mode dialog");
-  await page.getByRole("tab", { name: "Generate QR" }).click();
   await page.locator(".qr-mode-code-panel svg").waitFor();
   await page.screenshot({ path: path.join(outputDirectory, `${viewportName}-qr-mode.png`) });
-  await page.getByRole("button", { name: "Close QR mode" }).click();
+  await page.getByRole("button", { name: "Close attendance QR" }).click();
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.locator(".mobile-more-sheet").waitFor();
   await page.waitForTimeout(300);
@@ -179,15 +178,8 @@ async function auditInteractions(page, baseUrl, viewportName) {
   await page.screenshot({ path: path.join(outputDirectory, `${viewportName}-global-search.png`) });
   await page.getByRole("button", { name: "Close global search" }).click();
 
-  await page.goto(`${baseUrl}/#/events`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(550);
-  await page.getByRole("button", { name: "Show attendance QR" }).click();
-  await page.locator(".qr-dialog").waitFor();
-  await assertPanelFits(page, ".qr-dialog", "Attendance QR dialog");
-  await page.screenshot({ path: path.join(outputDirectory, `${viewportName}-qr-dialog.png`) });
-  await page.getByRole("button", { name: "Close QR code" }).click();
 
-  await page.goto(`${baseUrl}/#/my-notes`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/#/my-notes`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(550);
   await page.getByRole("button", { name: "Upload note" }).click();
   await page.locator(".note-editor-dialog").waitFor();
@@ -197,16 +189,18 @@ async function auditInteractions(page, baseUrl, viewportName) {
 }
 
 async function switchUser(page, userId) {
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: "networkidle" }),
-    page.evaluate((nextUserId) => {
-      const key = "tutorial-clinic:demo:v1";
-      const state = JSON.parse(localStorage.getItem(key));
+  await page.evaluate((nextUserId) => {
+    const key = "tutorial-clinic:demo:v2";
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const state = JSON.parse(raw);
       state.currentUserId = nextUserId;
       localStorage.setItem(key, JSON.stringify(state));
-      window.location.reload();
-    }, userId),
-  ]);
+    }
+    window.location.reload();
+  }, userId);
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(500);
 }
 
 const server = await createServer({ root: projectRoot, server: { host: "127.0.0.1", port: 0 } });
@@ -230,7 +224,7 @@ try {
     await switchUser(page, "adm-001");
     for (const route of adminRoutes) report.push({ viewport: viewport.name, ...(await inspectRoute(page, baseUrl, route, viewport.name)) });
     await switchUser(page, "stu-042");
-    await page.goto(`${baseUrl}/#/dashboard`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/#/dashboard`, { waitUntil: "domcontentloaded" });
     await page.locator(".setup-dialog").waitFor();
     await assertPanelFits(page, ".setup-dialog", "First-login setup dialog");
     await page.screenshot({ path: path.join(outputDirectory, `${viewport.name}-account-setup.png`) });

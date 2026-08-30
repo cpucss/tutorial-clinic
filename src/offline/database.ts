@@ -15,7 +15,7 @@ export type EntityType =
   | "notification"
   | "announcement";
 
-export type MutationOperation = "upsert" | "delete" | "upload-file";
+export type MutationOperation = "upsert" | "delete" | "set" | "update" | "upload-file";
 export type MutationStatus = "pending" | "syncing" | "failed" | "conflict";
 
 // A cached record stored in IndexedDB
@@ -86,42 +86,72 @@ const DB_VERSION = 1;
 let dbInstance: IDBPDatabase<TutorialClinicDB> | null = null;
 
 // Returns the IndexedDB connection, creating it on first call
-export async function getOfflineDatabase(): Promise<IDBPDatabase<TutorialClinicDB>> {
+export async function getOfflineDatabase(): Promise<IDBPDatabase<TutorialClinicDB> | null> {
+  if (typeof indexedDB === "undefined") return null;
   if (dbInstance) return dbInstance;
 
-  dbInstance = await openDB<TutorialClinicDB>(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains("entities")) {
-        const entityStore = db.createObjectStore("entities", { keyPath: "key" });
-        entityStore.createIndex("by-user-type", ["userId", "entityType"]);
-      }
+  try {
+    dbInstance = await openDB<TutorialClinicDB>(DB_NAME, DB_VERSION, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains("entities")) {
+          const entityStore = db.createObjectStore("entities", { keyPath: "key" });
+          entityStore.createIndex("by-user-type", ["userId", "entityType"]);
+        }
 
-      if (!db.objectStoreNames.contains("outbox")) {
-        const outboxStore = db.createObjectStore("outbox", { keyPath: "mutationId" });
-        outboxStore.createIndex("by-status", "status");
-        outboxStore.createIndex("by-user", "userId");
-      }
+        if (!db.objectStoreNames.contains("outbox")) {
+          const outboxStore = db.createObjectStore("outbox", { keyPath: "mutationId" });
+          outboxStore.createIndex("by-status", "status");
+          outboxStore.createIndex("by-user", "userId");
+        }
 
-      if (!db.objectStoreNames.contains("files")) {
-        db.createObjectStore("files", { keyPath: "fileId" });
-      }
+        if (!db.objectStoreNames.contains("files")) {
+          db.createObjectStore("files", { keyPath: "fileId" });
+        }
 
-      if (!db.objectStoreNames.contains("syncMeta")) {
-        db.createObjectStore("syncMeta", { keyPath: "key" });
-      }
-    },
-  });
+        if (!db.objectStoreNames.contains("syncMeta")) {
+          db.createObjectStore("syncMeta", { keyPath: "key" });
+        }
+      },
+    });
 
-  return dbInstance;
+    return dbInstance;
+  } catch (e) {
+    console.warn("Could not open IndexedDB:", e);
+    return null;
+  }
+}
+
+// Clears user-partitioned offline cache on sign out
+export async function clearUserOfflineCache(userId: string): Promise<void> {
+  try {
+    const db = await getOfflineDatabase();
+    if (!db) return;
+    const tx = db.transaction(["entities", "outbox"], "readwrite");
+    const entities = await tx.objectStore("entities").getAll();
+    for (const ent of entities) {
+      if (ent.userId === userId) {
+        await tx.objectStore("entities").delete(ent.key);
+      }
+    }
+    await tx.done;
+  } catch (e) {
+    console.warn("Could not clear offline cache:", e);
+  }
 }
 
 // Returns a persistent device ID, generating one on first call
 export async function getDeviceId(): Promise<string> {
   const db = await getOfflineDatabase();
-  const existing = await db.get("syncMeta", "deviceId");
-  if (existing) return existing.value;
+  if (!db) return crypto.randomUUID();
 
-  const newId = crypto.randomUUID();
-  await db.put("syncMeta", { key: "deviceId", value: newId });
-  return newId;
+  try {
+    const existing = await db.get("syncMeta", "deviceId");
+    if (existing) return existing.value;
+
+    const newId = crypto.randomUUID();
+    await db.put("syncMeta", { key: "deviceId", value: newId });
+    return newId;
+  } catch {
+    return crypto.randomUUID();
+  }
 }

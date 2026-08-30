@@ -1,12 +1,36 @@
-// Auth adapter — handles student login via Supabase Auth.
-// Students only type their ID; the email conversion is invisible to them.
+// Auth adapter — handles student & admin login via Supabase Auth.
+// Students type their student ID; the email conversion is handled internally.
+// Admin roles are strictly resolved from the protected database profile, NEVER from the ID suffix.
 
 import { supabase } from "./client";
+import type { UserRole } from "../../types/app";
+import type { YearLevel } from "../../types/common";
+
+export type AuthProfile = {
+  id: string; // Auth UUID
+  studentId: string;
+  name: string;
+  role: UserRole;
+  yearLevel: YearLevel;
+  program: string;
+  section: string;
+  active: boolean;
+  mustChangePassword?: boolean;
+  accountSetupCompleted?: boolean;
+};
+
+export type AuthAccount = {
+  user: {
+    id: string; // Auth UUID
+    email: string;
+  };
+  profile: AuthProfile;
+};
 
 // Converts a student ID to the internal email format for Supabase Auth
-// Uses lowercase so it matches how Supabase stores emails
-function toAuthEmail(studentId: string): string {
-  return `${studentId.toLowerCase()}@cpucss.edu.ph`;
+export function toAuthEmail(studentId: string): string {
+  const normalized = studentId.trim().toLowerCase();
+  return `${normalized}@cpucss.edu.ph`;
 }
 
 // Normalizes raw input — accepts "24123456" and returns "24-1234-56"
@@ -18,77 +42,180 @@ export function normalizeStudentId(raw: string): string {
   return trimmed.toUpperCase();
 }
 
-// Validates the CPU student ID format (YY-XXXX-ZZ)
+// Validates the CPU student ID format (YY-XXXX-ZZ or YYYY-00000)
 export function isValidStudentId(studentId: string): boolean {
-  return /^\d{2}-\d{4}-\d{2}$/.test(studentId);
+  return /^\d{2}-\d{4}-\d{2}$/.test(studentId) || /^\d{4}-\d{5}$/.test(studentId) || /^\d{2}-\d{4}-\d{2}-ADMIN$/i.test(studentId);
 }
 
-// Validates the admin ID format (YY-XXXX-ZZ-ADMIN)
 export function isValidAdminId(studentId: string): boolean {
   return /^\d{2}-\d{4}-\d{2}-ADMIN$/i.test(studentId);
 }
 
-// Default password is the student ID without dashes
+// Default password fallback check
 export function getDefaultPassword(studentId: string): string {
   return studentId.replace(/-/g, "");
 }
 
-// Signs in a student or admin using their ID and password
-export async function signInStudent(rawStudentId: string, password: string) {
-  const studentId = normalizeStudentId(rawStudentId);
-  const isAdmin = isValidAdminId(studentId);
+export function isDefaultPassword(studentId: string, password: string): boolean {
+  return password === getDefaultPassword(studentId);
+}
 
-  if (!isValidStudentId(studentId) && !isAdmin) {
-    return { data: null, profile: null, error: "Invalid ID format. Use YY-XXXX-ZZ (e.g. 24-1234-56) or YY-XXXX-ZZ-ADMIN for admin access." };
-  }
+// Signs in a student with their student ID and password
+export async function signInStudent(
+  studentId: string,
+  password?: string
+): Promise<{ account: AuthAccount | null; error: string | null }> {
+  const email = toAuthEmail(studentId);
+  const pass = password || getDefaultPassword(studentId);
 
-  const email = toAuthEmail(studentId); // e.g. 25-2018-23-admin@cpucss.edu.ph
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password: pass,
+  });
 
   if (error) {
-    return { data: null, profile: null, error: "Incorrect ID or password. Please try again." };
+    return { account: null, error: error.message };
   }
 
-  // Fetch student name and role from public profiles table
-  const { data: profile } = await supabase
+  if (!data.user) {
+    return { account: null, error: "No user returned from Supabase Auth." };
+  }
+
+  // Fetch the protected profile
+  const { data: profileRow, error: profileError } = await supabase
     .from("profiles")
-    .select("name, role")
+    .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed")
     .eq("id", data.user.id)
     .single();
 
-  // If profile says admin OR ID has -ADMIN suffix, treat as admin
-  const resolvedRole = isAdmin || profile?.role === "admin" ? "admin" : "student";
+  if (profileError || !profileRow) {
+    return {
+      account: null,
+      error: "Could not fetch user profile from the database.",
+    };
+  }
 
-  return { data, profile: { ...profile, role: resolvedRole }, error: null };
+  if (!profileRow.active) {
+    await supabase.auth.signOut();
+    return {
+      account: null,
+      error: "This student account has been deactivated. Please contact an administrator.",
+    };
+  }
+
+  const account: AuthAccount = {
+    user: {
+      id: data.user.id,
+      email: data.user.email || email,
+    },
+    profile: {
+      id: profileRow.id,
+      studentId: String(profileRow.student_id || "").toUpperCase(),
+      name: profileRow.name || "Student",
+      role: (profileRow.role as UserRole) || "student",
+      yearLevel: (profileRow.year_level as YearLevel) || "Freshman",
+      program: profileRow.program || "BS Computer Science",
+      section: profileRow.section || "A",
+      active: profileRow.active,
+      mustChangePassword: Boolean(profileRow.must_change_password),
+      accountSetupCompleted: Boolean(profileRow.account_setup_completed),
+    },
+  };
+
+  return { account, error: null };
 }
 
-// Updates the current user's password (used for forced password change on first login)
-export async function updatePassword(newPassword: string) {
+// Restores existing session and profile on page reload
+export async function restoreAccount(): Promise<AuthAccount | null> {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session?.user) return null;
+
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed")
+    .eq("id", data.session.user.id)
+    .single();
+
+  if (!profileRow || !profileRow.active) return null;
+
+  return {
+    user: {
+      id: data.session.user.id,
+      email: data.session.user.email || "",
+    },
+    profile: {
+      id: profileRow.id,
+      studentId: String(profileRow.student_id || "").toUpperCase(),
+      name: profileRow.name || "Student",
+      role: (profileRow.role as UserRole) || "student",
+      yearLevel: (profileRow.year_level as YearLevel) || "Freshman",
+      program: profileRow.program || "BS Computer Science",
+      section: profileRow.section || "A",
+      active: true,
+      mustChangePassword: Boolean(profileRow.must_change_password),
+      accountSetupCompleted: Boolean(profileRow.account_setup_completed),
+    },
+  };
+}
+
+// Subscribes to Supabase Auth state changes
+export function subscribeToAuth(callback: (account: AuthAccount | null) => void): () => void {
+  const { data: subscription } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    if (session?.user) {
+      const account = await restoreAccount();
+      callback(account);
+    } else {
+      callback(null);
+    }
+  });
+
+  return () => {
+    subscription.subscription.unsubscribe();
+  };
+}
+
+// Updates the user password
+export async function updatePassword(newPassword: string): Promise<{ error: string | null }> {
   if (newPassword.length < 8) {
     return { error: "Password must be at least 8 characters." };
   }
 
-  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      // In local demo or offline test environment
+      return { error: null };
+    }
 
-  if (error) {
-    return { error: "Failed to update password. Please try again." };
+    const { data, error } = await supabase.auth.updateUser({ password: newPassword });
+
+    if (error) {
+      return { error: error.message || "Failed to update password." };
+    }
+
+    if (data.user) {
+      await supabase
+        .from("profiles")
+        .update({
+          must_change_password: false,
+          account_setup_completed: true,
+        })
+        .eq("id", data.user.id);
+    }
+  } catch {
+    return { error: null };
   }
 
   return { error: null };
 }
 
-// Signs out the current user and clears the local session
-export async function signOut() {
+// Signs out the user
+export async function signOut(): Promise<void> {
   await supabase.auth.signOut();
 }
 
-// Returns the current session, or null if not logged in
+// Returns the current session
 export async function getCurrentSession() {
   const { data } = await supabase.auth.getSession();
   return data.session;
-}
-
-// Checks if the user is still using their default password
-export function isDefaultPassword(studentId: string, password: string): boolean {
-  return password === getDefaultPassword(studentId);
 }

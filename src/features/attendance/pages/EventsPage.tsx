@@ -27,9 +27,9 @@ export function EventsPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage,
   }).sort((a, b) => +new Date(a.date) - +new Date(b.date)), [query, state.events, status, subjectId, year]);
   const selected = filtered.find((event) => event.id === selectedId) ?? filtered[0];
 
-  function changeRsvp(event: DemoEvent) {
+  async function changeRsvp(event: DemoEvent) {
     if (myRsvpIds.has(event.id)) { setCancelId(event.id); return; }
-    const result = toggleRsvp(event.id);
+    const result = await toggleRsvp(event.id);
     onNotify?.({ tone: result.ok ? "success" : "error", title: result.ok ? "RSVP saved" : "RSVP unavailable", description: result.message });
   }
 
@@ -55,7 +55,7 @@ export function EventsPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage,
 
       <main className="event-detail-panel min-w-0 flex-1 overflow-y-auto bg-white">{selected ? <EventDetail event={selected} rsvpCount={getRsvpCount(state, selected.id)} rsvped={myRsvpIds.has(selected.id)} scheduled={scheduleIds.has(selected.id)} isStudent={currentUser?.role !== "admin"} onRsvp={() => changeRsvp(selected)} onSchedule={() => schedule(selected.id)} subject={state.subjects.find((item) => item.id === selected.subjectId)?.name ?? "General study"} /> : <div className="p-8"><EmptyState title="Choose a session" body="Select a session from the list to view its full details." /></div>}</main>
 
-      <ConfirmDialog open={Boolean(cancelId)} title="Cancel this RSVP?" body="Your reservation will be released. The event remains in My Schedule unless you remove it separately." confirmLabel="Cancel RSVP" cancelLabel="Keep RSVP" tone="warning" onCancel={() => setCancelId(null)} onConfirm={() => { if (cancelId) { const result = toggleRsvp(cancelId); onNotify?.({ tone: result.ok ? "warning" : "error", title: result.ok ? "RSVP cancelled" : "Unable to cancel", description: result.message }); } setCancelId(null); }} />
+      <ConfirmDialog open={Boolean(cancelId)} title="Cancel this RSVP?" body="Your reservation will be released. The event remains in My Schedule unless you remove it separately." confirmLabel="Cancel RSVP" cancelLabel="Keep RSVP" tone="warning" onCancel={() => setCancelId(null)} onConfirm={async () => { if (cancelId) { const targetId = cancelId; setCancelId(null); const result = await toggleRsvp(targetId); onNotify?.({ tone: result.ok ? "warning" : "error", title: result.ok ? "RSVP cancelled" : "Unable to cancel", description: result.message }); } }} />
     </div>
   );
 }

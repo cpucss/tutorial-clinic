@@ -1,36 +1,13 @@
-const ATTENDANCE_QR_PROTOCOL = "tutorial-clinic:";
+// Opaque single-use QR token validation utilities.
+// The QR contains only the raw cryptographic token issued by the server RPC (issue_attendance_qr).
+// No student ID, user UUID, name, role, or timestamps are embedded into the QR.
 
-export type StudentAttendanceQrPayload = {
-  userId: string;
-  studentId: string;
-  nonce: string;
-  issuedAt: number;
-  expiresAt: number;
-};
-
-export function buildStudentAttendanceQrPayload(payload: StudentAttendanceQrPayload) {
-  const params = new URLSearchParams({
-    user: payload.userId,
-    student: payload.studentId,
-    nonce: payload.nonce,
-    issued: String(payload.issuedAt),
-    expires: String(payload.expiresAt),
-  });
-  return `tutorial-clinic://student-attendance?${params.toString()}`;
-}
-
-export function parseStudentAttendanceQrPayload(value: string): StudentAttendanceQrPayload | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== ATTENDANCE_QR_PROTOCOL || url.hostname !== "student-attendance") return null;
-    const userId = url.searchParams.get("user")?.trim();
-    const studentId = url.searchParams.get("student")?.trim().toUpperCase();
-    const nonce = url.searchParams.get("nonce")?.trim();
-    const issuedAt = Number(url.searchParams.get("issued"));
-    const expiresAt = Number(url.searchParams.get("expires"));
-    if (!userId || !studentId || !nonce || !Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || expiresAt <= issuedAt) return null;
-    return { userId, studentId, nonce, issuedAt, expiresAt };
-  } catch {
-    return null;
+export function isValidOpaqueQrToken(token: string): boolean {
+  if (!token || typeof token !== "string") return false;
+  const trimmed = token.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.includes("://") || trimmed.includes("?")) {
+    return false;
   }
+  // Server issues a 32-byte (64 hex characters) opaque random token
+  return /^[a-fA-F0-9]{32,128}$/.test(trimmed);
 }

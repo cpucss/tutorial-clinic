@@ -24,7 +24,7 @@ function NoteEditor({ note, onClose, onNotify }: { note?: DemoNote; onClose: () 
   async function save(submit: boolean) {
     setError(""); const id = note?.id ?? `note-${Date.now()}`; const fileId = file ? `file-${id}` : note?.fileId;
     if (file && file.size > 10 * 1024 * 1024) { setError("Files must be 10 MB or smaller."); return; }
-    const result = saveNote({ ...note, id, title, subjectId, description, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), fileName: file?.name ?? note?.fileName, fileType: file?.type ?? note?.fileType, fileId }, submit);
+    const result = await saveNote({ ...note, id, title, subjectId, description, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), fileName: file?.name ?? note?.fileName, fileType: file?.type ?? note?.fileType, fileId }, submit);
     if (!result.ok) { setError(result.message); return; }
     if (file && fileId) await saveNoteFile(fileId, file);
     onNotify?.({ tone: "success", title: submit ? "Note submitted" : "Draft saved", description: submit ? "The note is now in the admin moderation queue." : "Your draft is stored on this device." }); onClose();

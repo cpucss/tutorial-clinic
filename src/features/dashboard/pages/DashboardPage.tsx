@@ -37,10 +37,6 @@ export function DashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => vo
     if (currentUser.role === "admin") {
       return `Welcome, Admin ${firstName}!`;
     }
-    // If account setup is NOT completed, it's their first time!
-    if (!currentUser.accountSetup?.completed) {
-      return `Welcome, ${firstName}!`;
-    }
     return `Welcome back, ${firstName}!`;
   };
 

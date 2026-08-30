@@ -1,7 +1,14 @@
 import type { DemoEvent, DemoNote, DemoNotification, DemoState, DemoUser } from "../types/app";
 
-// Future backend integration can replace these synchronous mock implementations
-// while keeping the UI-facing method names stable.
+export * from "./supabase/client";
+export * from "./supabase/authAdapter";
+export * from "./supabase/profileRepository";
+export * from "./supabase/sessionRepository";
+export * from "./supabase/attendanceRepository";
+export * from "./supabase/notesRepository";
+export * from "./supabase/pointsRepository";
+export * from "./supabase/notificationsRepository";
+
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export const authService = {

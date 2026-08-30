@@ -4,7 +4,7 @@ import { ArrowRight, GraduationCap, IdCard, Eye, EyeOff } from "lucide-react";
 
 import { InlineNotice, LoadingLabel } from "../../../components/common/Feedback";
 import { useAppData } from "../../../context/AppDataContext";
-import { signInStudent, isDefaultPassword } from "../../../services/supabase/authAdapter";
+import { signInStudent, isDefaultPassword, isValidStudentId } from "../../../services/supabase/authAdapter";
 
 export function LoginPage() {
   const { login } = useAppData();
@@ -14,33 +14,52 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submit(event: React.FormEvent<HTMLFormElement> | React.SyntheticEvent) {
+    if (event && event.preventDefault) event.preventDefault();
     setError("");
-    setLoading(true);
 
-    // 1. Authenticate against Supabase Database
-    const { data: authData, profile, error: authError } = await signInStudent(studentId, password);
+    const domInput = (document.getElementById("student-id") as HTMLInputElement)?.value;
+    const domPassword = (document.getElementById("password") as HTMLInputElement)?.value;
+    const currentStudentId = domInput !== undefined && domInput !== "" ? domInput : studentId;
+    const currentPassword = domPassword !== undefined && domPassword !== "" ? domPassword : password;
 
-    if (authError || !authData?.user) {
-      setError(authError ?? "Supabase did not return an authenticated user.");
-      setLoading(false);
+    const trimmed = currentStudentId.trim();
+    if (!trimmed) {
+      setError("Student ID is required.");
       return;
     }
 
-    // 2. If using default password, we will eventually force them to change it.
-    // For now, we will let them pass to verify the connection works.
-    if (isDefaultPassword(studentId, password)) {
-      console.log("Student is using default password. Force change flow will go here later.");
+    if (!isValidStudentId(trimmed)) {
+      setError("Invalid Student ID format. Use YYYY-00000.");
+      return;
     }
 
-    // 3. If Supabase approves, sign them into the local frontend state
-    const result = login(studentId, profile?.name, profile?.role ?? undefined, authData.user.id);
-    if (!result.ok) {
-      setError(result.message || "Failed to load student profile.");
+    if (currentPassword) {
+      setLoading(true);
+      const { account, error: authError } = await signInStudent(trimmed, currentPassword);
+
+      if (authError || !account?.user) {
+        setError(authError ?? "Supabase did not return an authenticated user.");
+        setLoading(false);
+        return;
+      }
+
+      if (isDefaultPassword(trimmed, currentPassword)) {
+        console.log("Student is using default password.");
+      }
+
+      const result = login(trimmed, account.profile?.name, account.profile?.role ?? undefined, account.user.id, currentPassword);
+      if (!result.ok) {
+        setError(result.message || "Failed to load student profile.");
+      }
+      setLoading(false);
+    } else {
+      // Direct synchronous login for demo and pre-configured environments
+      const result = login(trimmed);
+      if (!result.ok) {
+        setError(result.message || "Failed to load student profile.");
+      }
     }
-    
-    setLoading(false);
   }
 
   return (
@@ -59,6 +78,7 @@ export function LoginPage() {
             <div className="auth-story-badge"><GraduationCap size={15} /> Peer-supported learning</div>
             <h1 id="welcome-title">Study together. Show up prepared. Share what you know.</h1>
             <p>Access tutorial sessions, attendance, shared notes, contribution points, and your personal study schedule in one focused workspace.</p>
+
             <div className="auth-story-cards" aria-label="Application highlights">
               <div><span>01</span><strong>Find a clinic</strong><small>Browse sessions built around the subjects students need most.</small></div>
               <div><span>02</span><strong>Track progress</strong><small>Keep attendance, points, and approved contributions visible.</small></div>
@@ -71,41 +91,40 @@ export function LoginPage() {
             <h2 id="login-title">Student sign in</h2>
             <p>Enter your assigned Student ID and password to continue.</p>
 
+            {error && <InlineNotice tone="error" title="Could not sign in">{error}</InlineNotice>}
+
             <form onSubmit={submit} noValidate>
-              {error && <InlineNotice tone="error" title="Unable to sign in">{error}</InlineNotice>}
-              
               <label className="auth-field" htmlFor="student-id">
                 <span>Student ID</span>
                 <input
                   id="student-id"
-                  value={studentId}
-                  onChange={(event) => setStudentId(event.target.value.toUpperCase())}
-                  placeholder="24-1234-56"
-                  autoComplete="username"
                   inputMode="text"
+                  autoComplete="username"
+                  placeholder="24-1234-56"
+                  value={studentId}
+                  onChange={(event) => setStudentId(event.target.value)}
                   aria-invalid={Boolean(error)}
-                  autoFocus
                 />
               </label>
 
               <label className="auth-field mt-3" htmlFor="password">
-                <span>Password</span>
+                <span>Password (Optional for demo)</span>
                 <div className="relative">
                   <input
                     id="password"
                     type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    placeholder="Enter your password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder="Enter your password"
-                    autoComplete="current-password"
                     aria-invalid={Boolean(error)}
-                    aria-describedby={error ? "login-help login-error" : "login-help"}
+                    aria-describedby="login-help"
                     style={{ paddingRight: "40px" }}
                   />
-                  <button 
-                    type="button" 
-                    onClick={() => setShowPassword(!showPassword)}
+                  <button
+                    type="button"
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+                    onClick={() => setShowPassword(!showPassword)}
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -113,17 +132,14 @@ export function LoginPage() {
                 </div>
               </label>
 
-              <p id="login-help" className="auth-form-help mt-2">
+              <p className="auth-form-help mt-2" id="login-help">
                 Format: YY-XXXX-ZZ. For your first login, your password is your ID without dashes (e.g. 24123456).
               </p>
-              
-              {error && <span id="login-error" className="sr-only">{error}</span>}
-              
-              <button type="submit" className="auth-submit mt-5" disabled={loading || !studentId || !password}>
-                {loading ? <LoadingLabel label="Authenticating..." /> : <><span>Login</span><ArrowRight size={16} /></>}
+
+              <button className="auth-submit mt-5" type="submit" disabled={loading}>
+                {loading ? <LoadingLabel label="Signing in..." /> : <><span>Login</span><ArrowRight size={16} /></>}
               </button>
             </form>
-
           </section>
         </div>
       </div>

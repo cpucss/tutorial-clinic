@@ -25,8 +25,8 @@ export function AdminAttendancePage({ onNotify }: { onNotify?: (toast: Omit<Toas
     })
     .sort((a, b) => +new Date(b.checkedInAt) - +new Date(a.checkedInAt)), [eventId, query, state.attendance, state.users, status]);
 
-  function approve(record: AttendanceRecord) {
-    const result = moderateAttendance(record.id, "Approved");
+  async function approve(record: AttendanceRecord) {
+    const result = await moderateAttendance(record.id, "Approved");
     onNotify?.({
       tone: result.ok ? "success" : "error",
       title: result.ok ? "Attendance approved" : "Attendance not updated",
@@ -111,8 +111,8 @@ function AttendanceEditor({ record, onClose, onNotify }: { record: AttendanceRec
   const user = state.users.find((item) => item.id === record.userId);
   const event = state.events.find((item) => item.id === record.eventId);
 
-  function save() {
-    const result = moderateAttendance(record.id, status, note);
+  async function save() {
+    const result = await moderateAttendance(record.id, status, note);
     if (!result.ok) { setError(result.message); return; }
     onNotify?.({ tone: status === "Approved" ? "success" : "warning", title: `Attendance ${status.toLowerCase()}`, description: `${user?.name}'s record was updated.` });
     onClose();

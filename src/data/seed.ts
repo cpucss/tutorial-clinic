@@ -1,4 +1,4 @@
-import type { DemoState, Preferences } from "../types/app";
+import type { DemoEvent, DemoNote, DemoNotification, DemoState, Preferences } from "../types/app";
 
 export const DEMO_STATE_VERSION = 2;
 export const DEMO_STORAGE_KEY = "tutorial-clinic:demo:v2";
@@ -26,6 +26,26 @@ export function createSeedState(): DemoState {
       id: "adm-001", name: "Nadia Cruz", studentId: "ADMIN-001", yearLevel: "Senior" as const,
       email: "admin@tutorialclinic.edu", program: "Computer Science Society", section: "Administration", role: "admin" as const,
       active: true, accountSetup: { completed: true, completedAt: atDay(-100) },
+    },
+    {
+      id: "stu-042", name: "Aria Cruz", studentId: "2024-00421", yearLevel: "Freshman" as const,
+      email: "aria.cruz@cpu.edu.ph", program: "BS Computer Science", section: "A", role: "student" as const,
+      active: true, accountSetup: { completed: false },
+    },
+    {
+      id: "stu-117", name: "Beatriz Santos", studentId: "2023-00117", yearLevel: "Sophomore" as const,
+      email: "beatriz.santos@cpu.edu.ph", program: "BS Information Technology", section: "B", role: "student" as const,
+      active: true, accountSetup: { completed: true, completedAt: atDay(-80) },
+    },
+    {
+      id: "stu-208", name: "Carlos Reyes", studentId: "2022-00208", yearLevel: "Junior" as const,
+      email: "carlos.reyes@cpu.edu.ph", program: "BS Computer Science", section: "A", role: "student" as const,
+      active: true, accountSetup: { completed: true, completedAt: atDay(-70) },
+    },
+    {
+      id: "stu-315", name: "Diana Lopez", studentId: "2021-00315", yearLevel: "Senior" as const,
+      email: "diana.lopez@cpu.edu.ph", program: "BS Information Technology", section: "A", role: "student" as const,
+      active: true, accountSetup: { completed: true, completedAt: atDay(-60) },
     },
   ];
 
@@ -116,8 +136,103 @@ export function createSeedState(): DemoState {
     { id: "sub-ft-04", code: "CSPE 4233",   name: "Network Defense and Countermeasures (CYS 4)", yearLevel: "Senior" as const, coordinator: "TBD", active: true },
   ];
 
-  const events: any[] = [];
-  const points: any[] = [];
+  const events: DemoEvent[] = [
+    {
+      id: "evt-1",
+      title: "Fundamentals of Programming Review",
+      subjectId: "sub-101",
+      description: "Review core programming concepts including syntax, control structures, and methods.",
+      topics: ["Loops", "Methods", "Arrays"],
+      date: atDay(1, 14, 0),
+      endDate: atDay(1, 16, 0),
+      venue: "Computer Lab 1",
+      capacity: 30,
+      status: "Upcoming",
+      attendanceCode: "PROG101",
+      yearLevels: ["Freshman"],
+      instructor: "Prof. Alan Turing",
+      instructorRole: "Faculty",
+      createdAt: now,
+    },
+    {
+      id: "evt-3",
+      title: "Data Structures Clinic",
+      subjectId: "sub-150",
+      description: "Hands-on clinic covering linked lists, trees, and hash maps.",
+      topics: ["Trees", "Hash Tables", "Linked Lists"],
+      date: atDay(2, 10, 0),
+      endDate: atDay(2, 12, 0),
+      venue: "Online",
+      capacity: 25,
+      status: "Upcoming",
+      attendanceCode: "DATA150",
+      yearLevels: ["Freshman", "Sophomore"],
+      instructor: "Prof. Ada Lovelace",
+      instructorRole: "Faculty",
+      createdAt: now,
+    },
+  ];
+
+  const notes: DemoNote[] = [
+    {
+      id: "n1",
+      title: "Java Control Structures Summary",
+      subjectId: "sub-101",
+      description: "Summary of if-else and switch-case syntax in Java.",
+      tags: ["Java", "Syntax"],
+      uploaderId: "stu-117",
+      status: "Approved",
+      createdAt: atDay(-10),
+      updatedAt: atDay(-10),
+      downloads: 14,
+    },
+    {
+      id: "n3",
+      title: "Data Structures Complexity Cheat Sheet",
+      subjectId: "sub-150",
+      description: "Big-O runtime reference for common operations.",
+      tags: ["Big-O", "Complexity"],
+      uploaderId: "stu-042",
+      status: "Pending",
+      createdAt: atDay(-1),
+      updatedAt: atDay(-1),
+      downloads: 0,
+    },
+  ];
+
+  const notifications: DemoNotification[] = [
+    {
+      id: "notif-1",
+      userId: "stu-042",
+      title: "Welcome to Tutorial Clinic",
+      message: "Your student portal is ready.",
+      type: "Account",
+      createdAt: atDay(-5),
+    },
+  ];
+
+  const points = [
+    {
+      id: "pt-seed-1",
+      userId: "stu-042",
+      points: 40,
+      reason: "Attended tutorial clinic",
+      createdAt: atDay(-3),
+      relatedType: "Attendance" as const,
+    },
+  ];
+
+  const attendance = [
+    {
+      id: "att-seed-1",
+      eventId: "evt-3",
+      userId: "stu-042",
+      checkedInAt: atDay(-3),
+      method: "QR" as const,
+      arrival: "On time" as const,
+      status: "Approved" as const,
+    },
+  ];
 
   return {
     version: DEMO_STATE_VERSION,
@@ -126,12 +241,12 @@ export function createSeedState(): DemoState {
     subjects,
     events,
     rsvps: [],
-    attendance: [],
-    notes: [],
+    attendance,
+    notes,
     favouriteNoteIds: {},
     scheduleEventIds: {},
     points,
-    notifications: [],
+    notifications,
     announcements: [],
     preferences: Object.fromEntries(students.map((user) => [user.id, { ...defaultPreferences }])),
   };

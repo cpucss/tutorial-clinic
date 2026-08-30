@@ -556,8 +556,8 @@ function SessionEditor({
   );
   const [error, setError] = useState("");
 
-  function submit() {
-    const result = saveEvent({
+  async function submit() {
+    const result = await saveEvent({
       ...event,
       title,
       subjectId,

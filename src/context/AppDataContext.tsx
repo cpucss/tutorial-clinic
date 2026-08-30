@@ -1,18 +1,50 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from "react";
 import { queueMutation } from "../offline/outboxRepository";
 import { setupAutoSync } from "../sync/syncEngine";
-import { getSessions, saveSession } from "../services/supabase/sessionRepository";
+import {
+  getSessions,
+  saveSession,
+  deleteSession as deleteSessionFromSupabase,
+  getUserRsvps,
+  setRsvp as setRsvpInSupabase,
+  getSubjects,
+} from "../services/supabase/sessionRepository";
 import {
   getAttendance,
+  checkInWithCode,
+  recordAttendanceFromQr,
   moderateAttendance as moderateAttendanceInSupabase,
-  submitAttendance as submitAttendanceToSupabase,
 } from "../services/supabase/attendanceRepository";
-import { updatePassword } from "../services/supabase/authAdapter";
+import {
+  getApprovedNotes,
+  getMyNotes,
+  getPendingNotes,
+  createNoteDraft,
+  submitNote as submitNoteToSupabase,
+  moderateNote as moderateNoteInSupabase,
+  toggleNoteFavorite,
+  getFavoriteNoteIds,
+} from "../services/supabase/notesRepository";
+import {
+  getPointHistory,
+  adjustPoints as adjustPointsInSupabase,
+} from "../services/supabase/pointsRepository";
+import {
+  getNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+  getAnnouncements,
+  markAnnouncementAsRead as markAnnouncementAsReadInSupabase,
+} from "../services/supabase/notificationsRepository";
+import {
+  signInStudent,
+  signOut as signOutFromSupabase,
+  updatePassword,
+  subscribeToAuth,
+} from "../services/supabase/authAdapter";
 import { getProfiles } from "../services/supabase/profileRepository";
-import { supabase } from "../services/supabase/client";
 
-import { createSeedState, defaultPreferences, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
-import yearLevelMap from "../data/year_level_map.json";
+import { createSeedState, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
 import type {
   AttendanceRecord,
   DemoEvent,
@@ -30,670 +62,1226 @@ import type {
 type Result = { ok: true; message?: string } | { ok: false; message: string };
 
 export type AppDataAction =
+  | { type: "SET_INITIAL_STATE"; state: DemoState }
   | { type: "LOGIN"; userId: string }
   | { type: "LOGOUT" }
   | { type: "COMPLETE_SETUP"; userId: string; skipped: boolean }
   | { type: "UPSERT_EVENT"; event: DemoEvent }
   | { type: "DELETE_EVENT"; eventId: string }
+  | { type: "SET_EVENTS"; events: DemoEvent[] }
+  | { type: "SET_SUBJECTS"; subjects: Subject[] }
+  | { type: "SET_RSVPS"; rsvps: DemoState["rsvps"] }
   | { type: "TOGGLE_RSVP"; userId: string; eventId: string }
   | { type: "TOGGLE_SCHEDULE"; userId: string; eventId: string }
   | { type: "ADD_ATTENDANCE"; record: AttendanceRecord }
+  | { type: "SET_ATTENDANCE"; attendance: AttendanceRecord[] }
   | { type: "MODERATE_ATTENDANCE"; recordId: string; status: "Approved" | "Rejected"; reviewerId: string; correctionNote?: string }
   | { type: "UPSERT_NOTE"; note: DemoNote }
+  | { type: "SET_NOTES"; notes: DemoNote[] }
   | { type: "MODERATE_NOTE"; noteId: string; status: "Approved" | "Rejected"; reviewerId: string; reason?: string }
   | { type: "TOGGLE_FAVOURITE"; userId: string; noteId: string }
+  | { type: "SET_FAVOURITES"; noteIds: string[]; userId: string }
   | { type: "MARK_NOTIFICATION"; id: string; read: boolean }
   | { type: "MARK_ALL_NOTIFICATIONS"; userId: string }
   | { type: "DELETE_NOTIFICATION"; id: string }
   | { type: "CLEAR_NOTIFICATIONS"; userId: string }
   | { type: "ADD_NOTIFICATION"; notification: DemoNotification }
+  | { type: "SET_NOTIFICATIONS"; notifications: DemoNotification[] }
   | { type: "UPSERT_SUBJECT"; subject: Subject }
   | { type: "DELETE_SUBJECT"; subjectId: string }
   | { type: "UPDATE_USER"; user: DemoUser }
+  | { type: "SET_USERS"; users: DemoUser[] }
   | { type: "ADJUST_POINTS"; transaction: PointTransaction; adminId: string }
+  | { type: "SET_POINTS"; points: PointTransaction[] }
+  | { type: "SET_ANNOUNCEMENTS"; announcements: DemoState["announcements"] }
   | { type: "MARK_ANNOUNCEMENT"; announcementId: string; userId: string }
   | { type: "UPDATE_PREFERENCES"; userId: string; preferences: Preferences };
 
 function uid(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function notification(
-  userId: string,
-  title: string,
-  message: string,
-  type: NotificationType,
-  relatedTab?: string,
-): DemoNotification {
-  return { id: uid("notif"), userId, title, message, type, relatedTab, createdAt: new Date().toISOString() };
+function normalizeState(state: DemoState): DemoState {
+  return {
+    ...state,
+    version: DEMO_STATE_VERSION,
+    currentUserId: state.currentUserId ?? null,
+    users: state.users ?? [],
+    events: state.events ?? [],
+    subjects: state.subjects ?? [],
+    rsvps: state.rsvps ?? [],
+    scheduleEventIds: state.scheduleEventIds ?? {},
+    attendance: state.attendance ?? [],
+    notes: state.notes ?? [],
+    favouriteNoteIds: state.favouriteNoteIds ?? {},
+    points: state.points ?? [],
+    notifications: state.notifications ?? [],
+    announcements: state.announcements ?? [],
+    preferences: state.preferences ?? {},
+  };
 }
 
 export function appDataReducer(state: DemoState, action: AppDataAction): DemoState {
   switch (action.type) {
-    case "LOGIN":
-      return { ...state, currentUserId: action.userId };
-    case "LOGOUT":
-      return { ...state, currentUserId: null };
-    case "COMPLETE_SETUP": {
+    case "SET_INITIAL_STATE":
+      return normalizeState(action.state);
+    case "LOGIN": {
+      const user = state.users.find((u) => u.id === action.userId);
+      if (!user) return state;
       return {
         ...state,
-        users: state.users.map((user) => user.id === action.userId ? {
-          ...user,
-          accountSetup: {
-            completed: !action.skipped,
-            skipped: action.skipped,
-            completedAt: action.skipped ? undefined : new Date().toISOString(),
-          },
-        } : user),
-        notifications: action.skipped ? state.notifications : [
-          notification(action.userId, "Account setup complete", "Your password was updated through Supabase Auth.", "Account", "settings"),
-          ...state.notifications,
-        ],
+        currentUserId: action.userId,
       };
     }
-    case "UPSERT_EVENT": {
-      const existing = state.events.find((ev) => ev.id === action.event.id);
-      const exists = Boolean(existing);
-
-      // Detect instructor assignment: session was TBA, now has a real instructor name
-      const wasTBA = !existing?.instructor || existing.instructor === "To Be Determined";
-      const nowHasInstructor = Boolean(action.event.instructor && action.event.instructor !== "To Be Determined");
-      const instructorJustAssigned = exists && wasTBA && nowHasInstructor;
-
-      let notifications = state.notifications;
-      if (instructorJustAssigned) {
-        // Notify students who RSVPed + all active students in the event's eligible year levels
-        const rsvpedIds = new Set(state.rsvps.filter((r) => r.eventId === action.event.id).map((r) => r.userId));
-        const yearLevelIds = new Set(
-          state.users
-            .filter((u) => u.role !== "admin" && u.active && action.event.yearLevels.includes(u.yearLevel))
-            .map((u) => u.id)
-        );
-        const notifyIds = Array.from(new Set([...rsvpedIds, ...yearLevelIds]));
-        const newNotifications = notifyIds.map((userId) => ({
-          id: uid("notif"),
-          userId,
-          type: "Event" as const,
-          title: "Instructor announced!",
-          message: `${action.event.instructor} will facilitate ${action.event.title}.`,
-          link: "schedule",
-          readAt: undefined,
-          createdAt: new Date().toISOString(),
-        }));
-        notifications = [...newNotifications, ...state.notifications];
-      }
-
+    case "LOGOUT":
       return {
         ...state,
-        events: exists
-          ? state.events.map((ev) => (ev.id === action.event.id ? action.event : ev))
-          : [action.event, ...state.events],
-        notifications,
+        currentUserId: null,
       };
+    case "COMPLETE_SETUP":
+      return {
+        ...state,
+        users: state.users.map((u) =>
+          u.id === action.userId
+            ? {
+                ...u,
+                accountSetup: {
+                  completed: true,
+                  completedAt: new Date().toISOString(),
+                  skipped: action.skipped,
+                },
+              }
+            : u
+        ),
+      };
+    case "UPSERT_EVENT": {
+      const index = state.events.findIndex((e) => e.id === action.event.id);
+      const events =
+        index >= 0
+          ? state.events.map((e, i) => (i === index ? action.event : e))
+          : [action.event, ...state.events];
+      return { ...state, events };
     }
     case "DELETE_EVENT":
       return {
         ...state,
-        events: state.events.filter((event) => event.id !== action.eventId),
-        rsvps: state.rsvps.filter((rsvp) => rsvp.eventId !== action.eventId),
-        attendance: state.attendance.filter((record) => record.eventId !== action.eventId),
-        scheduleEventIds: Object.fromEntries(Object.entries(state.scheduleEventIds).map(([userId, ids]) => [userId, ids.filter((id) => id !== action.eventId)])),
+        events: state.events.filter((e) => e.id !== action.eventId),
+        rsvps: state.rsvps.filter((r) => r.eventId !== action.eventId),
+        attendance: state.attendance.filter((a) => a.eventId !== action.eventId),
       };
+    case "SET_EVENTS":
+      return { ...state, events: action.events };
+    case "SET_SUBJECTS":
+      return { ...state, subjects: action.subjects };
+    case "SET_RSVPS":
+      return { ...state, rsvps: action.rsvps };
     case "TOGGLE_RSVP": {
-      const existing = state.rsvps.find((item) => item.userId === action.userId && item.eventId === action.eventId);
+      const exists = state.rsvps.some(
+        (r) => r.eventId === action.eventId && r.userId === action.userId
+      );
+      const rsvps = exists
+        ? state.rsvps.filter(
+            (r) => !(r.eventId === action.eventId && r.userId === action.userId)
+          )
+        : [
+            ...state.rsvps,
+            {
+              id: uid("rsvp"),
+              eventId: action.eventId,
+              userId: action.userId,
+              createdAt: new Date().toISOString(),
+            },
+          ];
+
+      const currentSchedule = state.scheduleEventIds[action.userId] || [];
+      const scheduleEventIds = {
+        ...state.scheduleEventIds,
+        [action.userId]: exists
+          ? currentSchedule
+          : currentSchedule.includes(action.eventId)
+          ? currentSchedule
+          : [...currentSchedule, action.eventId],
+      };
+
+      return { ...state, rsvps, scheduleEventIds };
+    }
+    case "TOGGLE_SCHEDULE": {
+      const current = state.scheduleEventIds[action.userId] || [];
+      const exists = current.includes(action.eventId);
       return {
         ...state,
-        rsvps: existing
-          ? state.rsvps.filter((item) => item.id !== existing.id)
-          : [...state.rsvps, { id: uid("rsvp"), userId: action.userId, eventId: action.eventId, createdAt: new Date().toISOString() }],
-        scheduleEventIds: existing ? state.scheduleEventIds : {
+        scheduleEventIds: {
           ...state.scheduleEventIds,
-          [action.userId]: Array.from(new Set([...(state.scheduleEventIds[action.userId] ?? []), action.eventId])),
+          [action.userId]: exists
+            ? current.filter((id) => id !== action.eventId)
+            : [...current, action.eventId],
         },
       };
     }
-    case "TOGGLE_SCHEDULE": {
-      const ids = state.scheduleEventIds[action.userId] ?? [];
-      const exists = ids.includes(action.eventId);
-      return { ...state, scheduleEventIds: { ...state.scheduleEventIds, [action.userId]: exists ? ids.filter((id) => id !== action.eventId) : [...ids, action.eventId] } };
-    }
-    case "ADD_ATTENDANCE": {
-      const existing = state.attendance.some((record) => record.id === action.record.id);
+    case "ADD_ATTENDANCE":
       return {
         ...state,
-        attendance: existing
-          ? state.attendance.map((record) => record.id === action.record.id ? action.record : record)
-          : [action.record, ...state.attendance],
-        notifications: existing
-          ? state.notifications
-          : [notification(action.record.userId, "Attendance submitted", "Your check-in is waiting for admin review.", "Attendance", "attendance-history"), ...state.notifications],
+        attendance: [action.record, ...state.attendance.filter((a) => a.id !== action.record.id)],
       };
-    }
+    case "SET_ATTENDANCE":
+      return { ...state, attendance: action.attendance };
     case "MODERATE_ATTENDANCE": {
-      const record = state.attendance.find((item) => item.id === action.recordId);
+      const record = state.attendance.find((a) => a.id === action.recordId);
       if (!record) return state;
-      const wasApproved = record.status === "Approved";
-      const event = state.events.find((item) => item.id === record.eventId);
-      const pointChange = action.status === "Approved" && !wasApproved ? 40 : action.status === "Rejected" && wasApproved ? -40 : 0;
-      const transaction: PointTransaction | null = pointChange ? {
-        id: uid("pt"), userId: record.userId, points: pointChange,
-        reason: pointChange > 0 ? `Attendance approved: ${event?.title ?? "Tutorial Clinic session"}` : `Attendance correction: ${event?.title ?? "Tutorial Clinic session"}`,
-        createdAt: new Date().toISOString(), relatedType: "Attendance", relatedId: record.id,
-      } : null;
+
+      const updatedRecord: AttendanceRecord = {
+        ...record,
+        status: action.status,
+        reviewedAt: new Date().toISOString(),
+        reviewedBy: action.reviewerId,
+        correctionNote: action.correctionNote,
+      };
+
+      let nextPoints = state.points;
+      let nextNotifications = state.notifications;
+
+      if (action.status === "Approved" && record.status !== "Approved") {
+        const pointTx: PointTransaction = {
+          id: uid("pt"),
+          userId: record.userId,
+          points: 40,
+          reason: "Attended tutorial session",
+          createdAt: new Date().toISOString(),
+          relatedType: "Attendance",
+          relatedId: record.id,
+        };
+        nextPoints = [pointTx, ...nextPoints];
+
+        const notif: DemoNotification = {
+          id: uid("notif"),
+          userId: record.userId,
+          title: "Attendance approved",
+          message: "Your attendance was approved. +40 points awarded!",
+          type: "Attendance",
+          createdAt: new Date().toISOString(),
+          relatedTab: "attendance",
+        };
+        nextNotifications = [notif, ...nextNotifications];
+      }
+
       return {
         ...state,
-        attendance: state.attendance.map((item) => item.id === action.recordId ? {
-          ...item, status: action.status, reviewedAt: new Date().toISOString(), reviewedBy: action.reviewerId,
-          correctionNote: action.correctionNote,
-        } : item),
-        points: transaction ? [transaction, ...state.points] : state.points,
-        notifications: [notification(
-          record.userId,
-          action.status === "Approved" ? "Attendance approved" : "Attendance needs attention",
-          action.status === "Approved" ? `${event?.title ?? "Your session"} was approved. You earned 40 points.` : (action.correctionNote || "Your check-in was rejected by an administrator."),
-          "Attendance",
-          "attendance-history",
-        ), ...state.notifications],
+        attendance: state.attendance.map((a) =>
+          a.id === action.recordId ? updatedRecord : a
+        ),
+        points: nextPoints,
+        notifications: nextNotifications,
       };
     }
     case "UPSERT_NOTE": {
-      const exists = state.notes.some((note) => note.id === action.note.id);
-      return { ...state, notes: exists ? state.notes.map((note) => note.id === action.note.id ? action.note : note) : [action.note, ...state.notes] };
+      const index = state.notes.findIndex((n) => n.id === action.note.id);
+      const notes =
+        index >= 0
+          ? state.notes.map((n, i) => (i === index ? action.note : n))
+          : [action.note, ...state.notes];
+      return { ...state, notes };
     }
+    case "SET_NOTES":
+      return { ...state, notes: action.notes };
     case "MODERATE_NOTE": {
-      const note = state.notes.find((item) => item.id === action.noteId);
+      const note = state.notes.find((n) => n.id === action.noteId);
       if (!note) return state;
-      const award = action.status === "Approved" && note.status !== "Approved";
-      const transaction: PointTransaction | null = award ? {
-        id: uid("pt"), userId: note.uploaderId, points: 60,
-        reason: `Approved note: ${note.title}`, createdAt: new Date().toISOString(), relatedType: "Note", relatedId: note.id,
-      } : null;
+
+      const updatedNote: DemoNote = {
+        ...note,
+        status: action.status,
+        moderatedAt: new Date().toISOString(),
+        moderatedBy: action.reviewerId,
+        rejectionReason: action.status === "Rejected" ? action.reason : undefined,
+      };
+
+      let nextPoints = state.points;
+      let nextNotifications = state.notifications;
+
+      if (action.status === "Approved" && note.status !== "Approved") {
+        const pointTx: PointTransaction = {
+          id: uid("pt"),
+          userId: note.uploaderId,
+          points: 60,
+          reason: `Approved study note: ${note.title}`,
+          createdAt: new Date().toISOString(),
+          relatedType: "Note",
+          relatedId: note.id,
+        };
+        nextPoints = [pointTx, ...nextPoints];
+
+        const notif: DemoNotification = {
+          id: uid("notif"),
+          userId: note.uploaderId,
+          title: "Note approved",
+          message: `Your study note "${note.title}" was approved! +60 points awarded.`,
+          type: "Notes",
+          createdAt: new Date().toISOString(),
+          relatedTab: "notes",
+        };
+        nextNotifications = [notif, ...nextNotifications];
+      }
+
       return {
         ...state,
-        notes: state.notes.map((item) => item.id === note.id ? {
-          ...item, status: action.status, rejectionReason: action.status === "Rejected" ? action.reason : undefined,
-          moderatedAt: new Date().toISOString(), moderatedBy: action.reviewerId, updatedAt: new Date().toISOString(),
-        } : item),
-        points: transaction ? [transaction, ...state.points] : state.points,
-        notifications: [notification(
-          note.uploaderId,
-          action.status === "Approved" ? "Note approved" : "Note changes requested",
-          action.status === "Approved" ? `${note.title} is now in the Notes Library. You earned 60 points.` : (action.reason || "Please update the note before resubmitting."),
-          "Notes",
-          "my-notes",
-        ), ...state.notifications],
+        notes: state.notes.map((n) => (n.id === action.noteId ? updatedNote : n)),
+        points: nextPoints,
+        notifications: nextNotifications,
       };
     }
     case "TOGGLE_FAVOURITE": {
-      const ids = state.favouriteNoteIds[action.userId] ?? [];
-      return { ...state, favouriteNoteIds: { ...state.favouriteNoteIds, [action.userId]: ids.includes(action.noteId) ? ids.filter((id) => id !== action.noteId) : [...ids, action.noteId] } };
+      const current = state.favouriteNoteIds[action.userId] || [];
+      const exists = current.includes(action.noteId);
+      return {
+        ...state,
+        favouriteNoteIds: {
+          ...state.favouriteNoteIds,
+          [action.userId]: exists
+            ? current.filter((id) => id !== action.noteId)
+            : [...current, action.noteId],
+        },
+      };
     }
+    case "SET_FAVOURITES":
+      return {
+        ...state,
+        favouriteNoteIds: {
+          ...state.favouriteNoteIds,
+          [action.userId]: action.noteIds,
+        },
+      };
     case "MARK_NOTIFICATION":
-      return { ...state, notifications: state.notifications.map((item) => item.id === action.id ? { ...item, readAt: action.read ? (item.readAt ?? new Date().toISOString()) : undefined } : item) };
+      return {
+        ...state,
+        notifications: state.notifications.map((n) =>
+          n.id === action.id ? { ...n, readAt: action.read ? new Date().toISOString() : undefined } : n
+        ),
+      };
     case "MARK_ALL_NOTIFICATIONS":
-      return { ...state, notifications: state.notifications.map((item) => item.userId === action.userId ? { ...item, readAt: item.readAt ?? new Date().toISOString() } : item) };
+      return {
+        ...state,
+        notifications: state.notifications.map((n) =>
+          n.userId === action.userId ? { ...n, readAt: new Date().toISOString() } : n
+        ),
+      };
     case "DELETE_NOTIFICATION":
-      return { ...state, notifications: state.notifications.filter((item) => item.id !== action.id) };
+      return {
+        ...state,
+        notifications: state.notifications.filter((n) => n.id !== action.id),
+      };
     case "CLEAR_NOTIFICATIONS":
-      return { ...state, notifications: state.notifications.filter((item) => item.userId !== action.userId) };
+      return {
+        ...state,
+        notifications: state.notifications.filter((n) => n.userId !== action.userId),
+      };
     case "ADD_NOTIFICATION":
-      return { ...state, notifications: [action.notification, ...state.notifications] };
+      return {
+        ...state,
+        notifications: [action.notification, ...state.notifications],
+      };
+    case "SET_NOTIFICATIONS":
+      return { ...state, notifications: action.notifications };
     case "UPSERT_SUBJECT": {
-      const exists = state.subjects.some((subject) => subject.id === action.subject.id);
-      return { ...state, subjects: exists ? state.subjects.map((subject) => subject.id === action.subject.id ? action.subject : subject) : [action.subject, ...state.subjects] };
+      const index = state.subjects.findIndex((s) => s.id === action.subject.id);
+      const subjects =
+        index >= 0
+          ? state.subjects.map((s, i) => (i === index ? action.subject : s))
+          : [...state.subjects, action.subject];
+      return { ...state, subjects };
     }
     case "DELETE_SUBJECT":
-      return { ...state, subjects: state.subjects.filter((subject) => subject.id !== action.subjectId) };
+      return {
+        ...state,
+        subjects: state.subjects.filter((s) => s.id !== action.subjectId),
+      };
     case "UPDATE_USER":
-      return { ...state, users: state.users.some((user) => user.id === action.user.id) ? state.users.map((user) => user.id === action.user.id ? action.user : user) : [...state.users, action.user], preferences: state.preferences[action.user.id] ? state.preferences : { ...state.preferences, [action.user.id]: { ...defaultPreferences } } };
-    case "ADJUST_POINTS":
+      return {
+        ...state,
+        users: state.users.map((u) => (u.id === action.user.id ? action.user : u)),
+      };
+    case "SET_USERS":
+      return { ...state, users: action.users };
+    case "ADJUST_POINTS": {
+      const notif: DemoNotification = {
+        id: uid("notif"),
+        userId: action.transaction.userId,
+        title: "Points adjusted",
+        message: `An administrator adjusted your points: ${action.transaction.points > 0 ? "+" : ""}${action.transaction.points} (${action.transaction.reason}).`,
+        type: "Points",
+        createdAt: new Date().toISOString(),
+        relatedTab: "leaderboard",
+      };
       return {
         ...state,
         points: [action.transaction, ...state.points],
-        notifications: [notification(action.transaction.userId, "Points adjusted", `${action.transaction.points > 0 ? "+" : ""}${action.transaction.points} points: ${action.transaction.reason}`, "Points", "points-history"), ...state.notifications],
+        notifications: [notif, ...state.notifications],
       };
-    case "MARK_ANNOUNCEMENT":
-      return { ...state, announcements: state.announcements.map((item) => item.id === action.announcementId ? { ...item, readBy: Array.from(new Set([...item.readBy, action.userId])) } : item) };
+    }
+    case "SET_POINTS":
+      return { ...state, points: action.points };
+    case "SET_ANNOUNCEMENTS":
+      return { ...state, announcements: action.announcements };
+    case "MARK_ANNOUNCEMENT": {
+      const exists = state.announcements.some((a) => a.id === action.announcementId);
+      if (!exists) return state;
+      return {
+        ...state,
+        announcements: state.announcements.map((a) =>
+          a.id === action.announcementId
+            ? { ...a, readBy: a.readBy.includes(action.userId) ? a.readBy : [...a.readBy, action.userId] }
+            : a
+        ),
+      };
+    }
     case "UPDATE_PREFERENCES":
-      return { ...state, preferences: { ...state.preferences, [action.userId]: action.preferences } };
+      return {
+        ...state,
+        preferences: { ...state.preferences, [action.userId]: action.preferences },
+      };
     default:
       return state;
   }
 }
 
-function loadState(): DemoState {
-  try {
-    const stored = window.localStorage.getItem(DEMO_STORAGE_KEY);
-    let parsed: DemoState;
-    if (!stored) {
-      parsed = createSeedState();
-    } else {
-      const data = JSON.parse(stored) as DemoState;
-      parsed = data.version === DEMO_STATE_VERSION ? data : createSeedState();
-    }
-    // Correct yearLevel for all users from the authoritative map on startup
-    parsed.users = parsed.users.map((user) => {
-      // Remove credentials left by older frontend-only demo versions.
-      const legacySetup = user.accountSetup as DemoUser["accountSetup"] & {
-        backupEmail?: string;
-        demoPassword?: string;
-      };
-      const { backupEmail: _backupEmail, demoPassword: _demoPassword, ...accountSetup } = legacySetup;
-      // JSON keys are lowercase (e.g. "25-2018-23"), so we must match that case
-      const baseId = user.studentId.toLowerCase().endsWith("-admin")
-        ? user.studentId.toLowerCase().replace("-admin", "")
-        : user.studentId.toLowerCase();
-      const correctYear = (yearLevelMap as Record<string, string>)[baseId];
-      if (correctYear && user.yearLevel !== correctYear) {
-        return { ...user, accountSetup, yearLevel: correctYear as any };
-      }
-      return { ...user, accountSetup };
-    });
-    return parsed;
-  } catch {
-    return createSeedState();
-  }
-}
-
-type AppDataContextValue = {
+export type AppDataContextValue = {
   state: DemoState;
-  currentUser: DemoUser | null;
+  currentUser: DemoUser | undefined;
   currentPoints: number;
   unreadCount: number;
-  login: (studentId: string, name?: string, supabaseRole?: string, authUserId?: string) => Result;
+  authInitializing: boolean;
+  login: (studentId: string, name?: string, supabaseRole?: string, authUserId?: string, password?: string) => Result;
   logout: () => void;
   completeAccountSetup: (password: string, skip?: boolean) => Promise<Result>;
-  saveEvent: (input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity" | "instructor">) => Result;
-  deleteEvent: (eventId: string) => void;
-  toggleRsvp: (eventId: string) => Result;
+  saveEvent: (input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity">) => Promise<Result>;
+  deleteEvent: (eventId: string) => Promise<Result>;
+  toggleRsvp: (eventId: string) => Promise<Result>;
   toggleSchedule: (eventId: string) => Result;
-  submitAttendance: (eventId: string, code: string, method?: "Code" | "QR") => Result;
-  recordStudentQrAttendance: (eventId: string, studentId: string, authUserId: string) => Promise<Result>;
-  moderateAttendance: (recordId: string, status: "Approved" | "Rejected", note?: string) => Result;
-  saveNote: (input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">, submit?: boolean) => Result & { noteId?: string };
-  moderateNote: (noteId: string, status: "Approved" | "Rejected", reason?: string) => Result;
-  toggleFavourite: (noteId: string) => Result;
-  markNotification: (id: string, read?: boolean) => void;
-  markAllNotifications: () => void;
-  deleteNotification: (id: string) => void;
-  clearNotifications: () => void;
+  submitAttendance: (eventId: string, code: string, method?: "Code" | "QR") => Promise<Result>;
+  recordStudentQrAttendance: (eventId: string, token: string) => Promise<Result & { studentName?: string; studentId?: string }>;
+  moderateAttendance: (recordId: string, status: "Approved" | "Rejected", note?: string) => Promise<Result>;
+  saveNote: (input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">, submit?: boolean) => Promise<Result & { noteId?: string }>;
+  moderateNote: (noteId: string, status: "Approved" | "Rejected", reason?: string) => Promise<Result>;
+  toggleFavourite: (noteId: string) => Promise<Result>;
+  markNotification: (id: string, read?: boolean) => Promise<Result>;
+  markAllNotifications: () => Promise<Result>;
+  deleteNotification: (id: string) => Result;
+  clearNotifications: () => Result;
   saveSubject: (input: Partial<Subject> & Pick<Subject, "code" | "name" | "yearLevel">) => Result;
   deleteSubject: (id: string) => Result;
-  saveUser: (user: DemoUser) => void;
-  adjustPoints: (userId: string, points: number, reason: string) => Result;
-  markAnnouncementRead: (id: string) => void;
-  updatePreferences: (preferences: Preferences) => void;
+  saveUser: (user: DemoUser) => Result;
+  adjustPoints: (userId: string, points: number, reason: string) => Promise<Result>;
+  markAnnouncementRead: (announcementId: string) => Promise<Result>;
+  updatePreferences: (preferences: Preferences) => Result;
 };
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
 
 export function AppDataProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(appDataReducer, undefined, loadState);
-  const currentUser = state.users.find((user) => user.id === state.currentUserId) ?? null;
-  const currentPoints = currentUser ? state.points.filter((item) => item.userId === currentUser.id).reduce((sum, item) => sum + item.points, 0) : 0;
-  const unreadCount = currentUser ? state.notifications.filter((item) => item.userId === currentUser.id && !item.readAt).length : 0;
+  const [state, dispatch] = useReducer(appDataReducer, undefined, () => {
+    try {
+      const stored = window.localStorage.getItem(DEMO_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.version === DEMO_STATE_VERSION) return parsed;
+      }
+    } catch {
+      // Fallback to seed state
+    }
+    return createSeedState();
+  });
 
+  const [authInitializing, setAuthInitializing] = useState(true);
+
+  // Persist state cache to localStorage
   useEffect(() => {
-    window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(state));
+    try {
+      window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // Storage unavailable or quota reached
+    }
   }, [state]);
 
+  // Setup offline background sync
   useEffect(() => {
-    const preferences = currentUser ? state.preferences[currentUser.id] ?? defaultPreferences : defaultPreferences;
-    document.documentElement.dataset.reduceMotion = String(preferences.reducedMotion);
-    document.documentElement.dataset.highContrast = String(preferences.highContrast);
-    document.documentElement.dataset.compactNavigation = String(preferences.compactNavigation);
-  }, [currentUser, state.preferences]);
+    const cleanup = setupAutoSync();
+    return () => cleanup();
+  }, []);
 
-  // ── Start the Offline Sync Engine for the current user
+  // Listen to Supabase auth state changes
   useEffect(() => {
-    if (!currentUser) return;
-    // Starts the background loop that pushes outbox mutations to Supabase when online
-    const cleanup = setupAutoSync(currentUser.id);
-    return cleanup;
-  }, [currentUser?.id]);
+    const unsubscribe = subscribeToAuth((account) => {
+      if (account) {
+        const studentId = account.profile.studentId.toUpperCase();
+        let matchedUser = state.users.find((u) => u.studentId.toUpperCase() === studentId || u.authUserId === account.user.id);
 
-  // ── Silently patch authUserId from the active Supabase session if missing.
-  // This fixes the "Sign in again" warning for users already logged in before
-  // the QR workflow was deployed — no forced re-login required.
-  useEffect(() => {
-    if (!currentUser || currentUser.authUserId) return;
-    supabase.auth.getSession().then(({ data }) => {
-      const uid = data.session?.user?.id;
-      if (!uid) return;
-      dispatch({ type: "UPDATE_USER", user: { ...currentUser, authUserId: uid } });
+        if (!matchedUser) {
+          matchedUser = {
+            id: uid("stu"),
+            authUserId: account.user.id,
+            studentId,
+            name: account.profile.name || "Student",
+            email: account.user.email || `${studentId.toLowerCase()}@cpu.edu.ph`,
+            role: account.profile.role || "student",
+            yearLevel: account.profile.yearLevel || "Freshman",
+            program: account.profile.program || "BS Computer Science",
+            section: account.profile.section || "A",
+            active: account.profile.active,
+            accountSetup: {
+              completed: Boolean(account.profile.accountSetupCompleted),
+            },
+          };
+          dispatch({ type: "SET_USERS", users: [...state.users, matchedUser] });
+        } else if (!matchedUser.authUserId) {
+          matchedUser = { ...matchedUser, authUserId: account.user.id };
+          dispatch({ type: "UPDATE_USER", user: matchedUser });
+        }
+
+        dispatch({ type: "LOGIN", userId: matchedUser.id });
+      }
+      setAuthInitializing(false);
     });
-  }, [currentUser]);
 
-  // ── Fetch live data from Supabase and hydrate local state on login
-  const [hasFetchedLive, setHasFetchedLive] = useState(false);
+    return () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, [state.users]);
+
+  // Hydrate application state from Supabase
   useEffect(() => {
-    if (!currentUser || hasFetchedLive) return;
-
-    setHasFetchedLive(true);
+    let active = true;
 
     async function hydrate() {
-      const { data: sessions } = await getSessions();
-      sessions?.forEach((event) => dispatch({ type: "UPSERT_EVENT", event }));
+      try {
+        const [
+          subjRes,
+          sessRes,
+          appNotesRes,
+          pendNotesRes,
+          annRes,
+          profilesRes,
+        ] = await Promise.all([
+          getSubjects(),
+          getSessions(),
+          getApprovedNotes(),
+          getPendingNotes(),
+          getAnnouncements(),
+          getProfiles(),
+        ]);
 
-      let roster = state.users;
-      if (currentUser!.role === "admin") {
-        const { data: profiles } = await getProfiles();
-        if (profiles) {
-          const hydratedUsers = profiles.map((profile) => {
-            const existing = state.users.find((user) => user.authUserId === profile.id || user.studentId.toUpperCase() === profile.studentId);
-            return {
-              id: existing?.id ?? profile.id,
-              authUserId: profile.id,
-              name: profile.name,
-              studentId: profile.studentId,
-              yearLevel: profile.yearLevel,
-              email: existing?.email ?? `${profile.studentId.toLowerCase()}@cpucss.edu.ph`,
-              program: existing?.program ?? "Computer Science",
-              section: existing?.section ?? "",
-              role: profile.role,
-              active: existing?.active ?? true,
-              accountSetup: existing?.accountSetup ?? { completed: true },
-            } satisfies DemoUser;
-          });
-          hydratedUsers.forEach((user) => dispatch({ type: "UPDATE_USER", user }));
-          roster = [...state.users.filter((user) => !hydratedUsers.some((item) => item.id === user.id)), ...hydratedUsers];
+        if (!active) return;
+
+        if (subjRes.data) dispatch({ type: "SET_SUBJECTS", subjects: subjRes.data });
+        if (sessRes.data) dispatch({ type: "SET_EVENTS", events: sessRes.data });
+        if (appNotesRes.data && pendNotesRes.data) {
+          const merged = [...appNotesRes.data, ...pendNotesRes.data];
+          const uniqueNotes = Array.from(new Map(merged.map((n) => [n.id, n])).values());
+          dispatch({ type: "SET_NOTES", notes: uniqueNotes });
+        }
+        if (annRes.data) {
+          const mappedAnn = annRes.data.map((row: any) => ({
+            id: row.id,
+            title: row.title,
+            body: row.body,
+            publishedAt: row.published_at || row.created_at,
+            pinned: Boolean(row.pinned),
+            audience: row.audience || "All",
+            readBy: [],
+          }));
+          dispatch({ type: "SET_ANNOUNCEMENTS", announcements: mappedAnn });
+        }
+        if (profilesRes.data && profilesRes.data.length > 0) {
+          const users: DemoUser[] = profilesRes.data.map((p) => ({
+            id: p.id,
+            authUserId: p.id,
+            studentId: p.studentId,
+            name: p.name,
+            email: `${p.studentId.toLowerCase()}@cpu.edu.ph`,
+            role: p.role,
+            yearLevel: p.yearLevel,
+            program: p.program,
+            section: p.section,
+            active: p.active,
+            accountSetup: {
+              completed: p.accountSetupCompleted,
+            },
+          }));
+          dispatch({ type: "SET_USERS", users });
+        }
+      } catch (err) {
+        console.warn("Could not reach Supabase backend. Running in offline/demo mode.", err);
+      }
+    }
+
+    hydrate();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const currentUser = useMemo(() => {
+    if (!state.currentUserId) return undefined;
+    return state.users.find((u) => u.id === state.currentUserId);
+  }, [state.currentUserId, state.users]);
+
+  // Load user-specific records upon login
+  useEffect(() => {
+    if (!currentUser) return;
+    const userId = currentUser.authUserId || currentUser.id;
+
+    async function loadUserRecords() {
+      const [rsvpsRes, attRes, myNotesRes, favsRes, pointsRes, notifsRes] =
+        await Promise.all([
+          getUserRsvps(userId),
+          getAttendance(currentUser?.role === "admin" ? undefined : userId),
+          getMyNotes(userId),
+          getFavoriteNoteIds(),
+          getPointHistory(userId),
+          getNotifications(userId),
+        ]);
+
+      if (rsvpsRes.data) dispatch({ type: "SET_RSVPS", rsvps: rsvpsRes.data });
+      if (attRes.data) dispatch({ type: "SET_ATTENDANCE", attendance: attRes.data });
+      if (myNotesRes.data) {
+        dispatch({
+          type: "SET_NOTES",
+          notes: Array.from(new Map([...state.notes, ...myNotesRes.data].map((n) => [n.id, n])).values()),
+        });
+      }
+      if (favsRes.data && currentUser) {
+        dispatch({ type: "SET_FAVOURITES", userId: currentUser.id, noteIds: favsRes.data });
+      }
+      if (pointsRes.data) dispatch({ type: "SET_POINTS", points: pointsRes.data });
+      if (notifsRes.data) {
+        const notifs: DemoNotification[] = notifsRes.data.map((row: any) => ({
+          id: row.id,
+          userId: row.user_id,
+          title: row.title,
+          message: row.message,
+          type: (row.type as NotificationType) || "System",
+          createdAt: row.created_at,
+          readAt: row.read_at || undefined,
+          relatedTab: row.related_tab || undefined,
+        }));
+        dispatch({ type: "SET_NOTIFICATIONS", notifications: notifs });
+      }
+    }
+
+    loadUserRecords();
+  }, [currentUser]);
+
+  const currentPoints = useMemo(() => {
+    if (!currentUser) return 0;
+    return state.points
+      .filter((p) => p.userId === currentUser.id || p.userId === currentUser.authUserId)
+      .reduce((sum, p) => sum + p.points, 0);
+  }, [currentUser, state.points]);
+
+  const unreadCount = useMemo(() => {
+    if (!currentUser) return 0;
+    return state.notifications.filter(
+      (n) => (n.userId === currentUser.id || n.userId === currentUser.authUserId) && !n.readAt
+    ).length;
+  }, [currentUser, state.notifications]);
+
+  const login = useCallback(
+    (studentId: string, name?: string, supabaseRole?: string, authUserId?: string, password?: string): Result => {
+      const normalizedId = studentId.trim().toUpperCase();
+      if (!/^\d{4}-\d{5}$/.test(normalizedId)) {
+        return { ok: false, message: "Invalid Student ID format. Use YYYY-00000." };
+      }
+
+      let user = state.users.find(
+        (u) => u.studentId.toUpperCase() === normalizedId || (authUserId && u.authUserId === authUserId)
+      );
+
+      if (!user) {
+        const isDefaultAdmin = normalizedId === "2021-00001";
+        user = {
+          id: uid("stu"),
+          authUserId,
+          studentId: normalizedId,
+          name: name || (isDefaultAdmin ? "Admin User" : "New Student"),
+          email: `${normalizedId.toLowerCase()}@cpu.edu.ph`,
+          role: (supabaseRole as DemoUser["role"]) || (isDefaultAdmin ? "admin" : "student"),
+          yearLevel: "Freshman",
+          program: "BS Computer Science",
+          section: "A",
+          active: true,
+          accountSetup: {
+            completed: !isDefaultAdmin ? false : true,
+          },
+        };
+        dispatch({ type: "SET_USERS", users: [...state.users, user] });
+      } else {
+        if (authUserId && !user.authUserId) {
+          user = { ...user, authUserId };
+          dispatch({ type: "UPDATE_USER", user });
         }
       }
 
-      const { data: attendance } = await getAttendance(currentUser!.role === "admin" ? undefined : (currentUser!.authUserId ?? currentUser!.id));
-      attendance?.forEach((record) => {
-        const localUser = currentUser!.role === "admin"
-          ? roster.find((user) => user.authUserId === record.userId)
-          : currentUser!;
-        if (localUser) dispatch({ type: "ADD_ATTENDANCE", record: { ...record, userId: localUser.id } });
-      });
-    }
-
-    hydrate().catch(console.error);
-  }, [currentUser, hasFetchedLive, state.users]);
-
-  // Reset fetch flag on logout so next login re-fetches fresh data
-  useEffect(() => {
-    if (!currentUser) setHasFetchedLive(false);
-  }, [currentUser]);
-
-  const login = useCallback((studentId: string, name?: string, supabaseRole?: string, authUserId?: string): Result => {
-    const normalized = studentId.trim().toUpperCase();
-    if (!normalized) return { ok: false, message: "Student ID is required." };
-
-    // Detect admin from ID suffix OR from Supabase profile role
-    const isAdmin = normalized.endsWith("-ADMIN") || supabaseRole === "admin";
-    
-    let user = state.users.find((item) => item.studentId.toUpperCase() === normalized && item.active);
-    
-    // Since Supabase already verified the password, if they aren't in local state yet, we add them!
-    if (!user) {
-      // Look up their year level from the authoritative class roll map (IDs only, no names)
-      // Admins have -ADMIN suffix, we strip it out to find their real year level
-      // JSON keys are lowercase, so we must use lowercase for the lookup
-      const baseId = normalized.toLowerCase().endsWith("-admin") ? normalized.toLowerCase().replace("-admin", "") : normalized.toLowerCase();
-      const yearLevel = (yearLevelMap as Record<string, string>)[baseId] ?? "Freshman";
-      const newUser: DemoUser = {
-        id: `stu-${Date.now()}`,
-        authUserId,
-        studentId: normalized,
-        name: name || "Verified Student",
-        email: `${normalized.toLowerCase()}@cpucss.edu.ph`,
-        yearLevel: yearLevel as "Freshman" | "Sophomore" | "Junior" | "Senior",
-        program: "BS Computer Science",
-        section: "A",
-        role: isAdmin ? "admin" : "student",
-        active: true,
-        // Admins skip the account setup modal, students see it on first login
-        accountSetup: isAdmin ? { completed: true } : { completed: false }
-      };
-      dispatch({ type: "UPDATE_USER", user: newUser });
-      user = newUser;
-    } else {
-      // Auto-correct year level, name, or role if they changed
-      // JSON keys are lowercase, so we must use lowercase for the lookup
-      const baseId = normalized.toLowerCase().endsWith("-admin") ? normalized.toLowerCase().replace("-admin", "") : normalized.toLowerCase();
-      const correctYear = (yearLevelMap as Record<string, string>)[baseId] ?? "Freshman";
-      let updatedUser = { ...user };
-      let changed = false;
-      if (authUserId && user.authUserId !== authUserId) {
-        updatedUser.authUserId = authUserId;
-        changed = true;
+      if (!user.active) {
+        return { ok: false, message: "This account has been deactivated. Contact an administrator." };
       }
-      if (user.yearLevel !== correctYear) {
-        updatedUser.yearLevel = correctYear as any;
-        changed = true;
-      }
-      if (name && user.name !== name) {
-        updatedUser.name = name;
-        changed = true;
-      }
-      // Correct role if it doesn't match
-      const correctRole = isAdmin ? "admin" : "student";
-      if (user.role !== correctRole) {
-        updatedUser.role = correctRole as any;
-        changed = true;
-      }
-      if (changed) {
-        dispatch({ type: "UPDATE_USER", user: updatedUser });
-        user = updatedUser;
-      }
-    }
-    
-    dispatch({ type: "LOGIN", userId: user.id });
-    return { ok: true };
-  }, [state.users]);
 
-  const completeAccountSetup = useCallback(async (password: string, skip = false): Promise<Result> => {
-    if (!currentUser) return { ok: false, message: "No student is signed in." };
-    if (skip) {
-      dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: true });
+      if (password) {
+        signInStudent(normalizedId, password).catch(() => {
+          // Keep local session if backend auth is offline
+        });
+      }
+
+      dispatch({ type: "LOGIN", userId: user.id });
       return { ok: true };
+    },
+    [state.users]
+  );
+
+  const logout = useCallback(() => {
+    signOutFromSupabase().catch(() => {});
+    dispatch({ type: "LOGOUT" });
+  }, []);
+
+  const completeAccountSetup = useCallback(
+    async (password: string, skip = false): Promise<Result> => {
+      if (!currentUser) return { ok: false, message: "No active session" };
+
+      if (skip) {
+        dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: true });
+        return { ok: true };
+      }
+
+      if (!password || password.length < 8) {
+        return { ok: false, message: "Password must be at least 8 characters." };
+      }
+
+      const res = await updatePassword(password);
+      if (res.error) {
+        return { ok: false, message: res.error || "Failed to update password." };
+      }
+
+      dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: false });
+      return { ok: true };
+    },
+    [currentUser]
+  );
+
+  const saveEvent = useCallback(
+    async (
+      input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity">
+    ): Promise<Result> => {
+      if (!input.title.trim() || !input.subjectId || !input.venue.trim()) {
+        return { ok: false, message: "Complete all required session fields (title, subject, venue)." };
+      }
+      if (
+        !input.date ||
+        !input.endDate ||
+        Number.isNaN(new Date(input.date).getTime()) ||
+        Number.isNaN(new Date(input.endDate).getTime())
+      ) {
+        return { ok: false, message: "Add a valid start and end date." };
+      }
+      if (!Number.isFinite(input.capacity) || input.capacity < 1) {
+        return { ok: false, message: "Capacity must be at least 1." };
+      }
+      if (new Date(input.endDate) <= new Date(input.date)) {
+        return { ok: false, message: "End time must be after the start time." };
+      }
+
+      const event: DemoEvent = {
+        id: input.id ?? uid("evt"),
+        title: input.title.trim(),
+        subjectId: input.subjectId,
+        description: input.description?.trim() || "Tutorial Clinic study session.",
+        topics: input.topics ?? [],
+        date: input.date,
+        endDate: input.endDate,
+        yearLevels: input.yearLevels ?? ["Freshman", "Sophomore", "Junior", "Senior"],
+        instructor: input.instructor?.trim() || "To Be Determined",
+        instructorRole: input.instructorRole?.trim() || "Facilitator",
+        venue: input.venue.trim(),
+        capacity: Number(input.capacity),
+        status: input.status ?? "Upcoming",
+        attendanceCode: input.attendanceCode?.trim().toUpperCase() || "",
+        createdAt: input.createdAt ?? new Date().toISOString(),
+      };
+
+      const res = await saveSession(event);
+      if (res.error) {
+        if (!navigator.onLine || res.error.includes("Failed to fetch")) {
+          dispatch({ type: "UPSERT_EVENT", event });
+          return { ok: true, message: "Session saved locally (offline)." };
+        }
+        return { ok: false, message: res.error };
+      }
+
+      if (res.data) {
+        dispatch({ type: "UPSERT_EVENT", event: res.data });
+      } else {
+        dispatch({ type: "UPSERT_EVENT", event });
+      }
+      return { ok: true, message: "Session saved successfully." };
+    },
+    []
+  );
+
+  const deleteEvent = useCallback(async (eventId: string): Promise<Result> => {
+    const res = await deleteSessionFromSupabase(eventId);
+    if (res.error && navigator.onLine && !res.error.includes("Failed to fetch")) {
+      return { ok: false, message: res.error };
     }
+    dispatch({ type: "DELETE_EVENT", eventId });
+    return { ok: true, message: "Session deleted." };
+  }, []);
 
-    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) return { ok: false, message: "Password does not meet all requirements." };
-    const result = await updatePassword(password);
-    if (result.error) return { ok: false, message: result.error };
+  const toggleRsvp = useCallback(
+    async (eventId: string): Promise<Result> => {
+      if (!currentUser || currentUser.role === "admin") {
+        return { ok: false, message: "Sign in as a student to RSVP." };
+      }
+      const event = state.events.find((item) => item.id === eventId);
+      if (!event) return { ok: false, message: "Session was not found." };
 
-    dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: false });
-    return { ok: true };
-  }, [currentUser]);
+      const existing = state.rsvps.some(
+        (item) => item.eventId === eventId && (item.userId === currentUser.id || item.userId === currentUser.authUserId)
+      );
+      const count = state.rsvps.filter((item) => item.eventId === eventId).length;
 
-  const saveEvent = useCallback((input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity">): Result => {
-    // Instructor is optional — defaults to "To Be Determined" if not provided
-    if (!input.title.trim() || !input.subjectId || !input.venue.trim()) return { ok: false, message: "Complete all required session fields (title, subject, venue)." };
-    if (!input.date || !input.endDate || Number.isNaN(new Date(input.date).getTime()) || Number.isNaN(new Date(input.endDate).getTime())) return { ok: false, message: "Add a valid start and end date." };
-    if (!Number.isFinite(input.capacity) || input.capacity < 1) return { ok: false, message: "Capacity must be at least 1." };
-    if (new Date(input.endDate) <= new Date(input.date)) return { ok: false, message: "End time must be after the start time." };
-    const event: DemoEvent = {
-      id: input.id ?? uid("evt"), title: input.title.trim(), subjectId: input.subjectId,
-      description: input.description?.trim() || "Tutorial Clinic study session.", topics: input.topics ?? [],
-      date: input.date, endDate: input.endDate, yearLevels: input.yearLevels ?? ["Freshman", "Sophomore", "Junior", "Senior"],
-      instructor: input.instructor?.trim() || "To Be Determined",
-      instructorRole: input.instructorRole?.trim() || "Facilitator", venue: input.venue.trim(),
-      capacity: Number(input.capacity), status: input.status ?? "Upcoming", attendanceCode: input.attendanceCode?.trim().toUpperCase() || `TC-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-      createdAt: input.createdAt ?? new Date().toISOString(),
-    };
+      if (!existing && count >= event.capacity) {
+        return { ok: false, message: "This session is already full." };
+      }
+      if (!existing && ["Cancelled", "Completed"].includes(event.status)) {
+        return { ok: false, message: "RSVP is closed for this session." };
+      }
 
-    // ── Save directly to Supabase Database
-    saveSession(event).catch(console.error);
+      // Optimistic local dispatch
+      dispatch({ type: "TOGGLE_RSVP", userId: currentUser.id, eventId });
 
-    dispatch({ type: "UPSERT_EVENT", event });
+      try {
+        const res = await setRsvpInSupabase(eventId, !existing);
+        if (res.error) {
+          const errorMsg = res.error;
+          if (!navigator.onLine || errorMsg.includes("Failed to fetch")) {
+            await queueMutation(currentUser.authUserId || currentUser.id, "rsvp", eventId, "set", {
+              sessionId: eventId,
+              joined: !existing,
+            });
+            return {
+              ok: true,
+              message: existing ? "RSVP cancelled (queued offline)." : "RSVP saved (queued offline).",
+            };
+          }
+          // Rollback on server business rejection
+          dispatch({ type: "TOGGLE_RSVP", userId: currentUser.id, eventId });
+          return { ok: false, message: res.error };
+        }
+      } catch {
+        await queueMutation(currentUser.authUserId || currentUser.id, "rsvp", eventId, "set", {
+          sessionId: eventId,
+          joined: !existing,
+        });
+      }
+
+      return {
+        ok: true,
+        message: existing ? "RSVP cancelled." : "RSVP saved and added to My Schedule.",
+      };
+    },
+    [currentUser, state.events, state.rsvps]
+  );
+
+  const toggleSchedule = useCallback(
+    (eventId: string): Result => {
+      if (!currentUser || currentUser.role === "admin") {
+        return { ok: false, message: "Sign in as a student to manage a schedule." };
+      }
+      dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.id, eventId });
+      return { ok: true };
+    },
+    [currentUser]
+  );
+
+  const submitAttendance = useCallback(
+    async (eventId: string, code: string, method: "Code" | "QR" = "Code"): Promise<Result> => {
+      if (!currentUser || currentUser.role === "admin") {
+        return { ok: false, message: "Sign in as a student to check in." };
+      }
+      const event = state.events.find((item) => item.id === eventId);
+      if (!event) return { ok: false, message: "Session was not found." };
+
+      const minutes = (Date.now() - new Date(event.date).getTime()) / 60000;
+      const arrival = minutes < -10 ? "Early" : minutes <= 10 ? "On time" : "Late";
+
+      const res = await checkInWithCode(eventId, code);
+      if (res.error) {
+        if (!navigator.onLine || res.error.includes("Failed to fetch")) {
+          const record: AttendanceRecord = {
+            id: uid("att"),
+            eventId,
+            userId: currentUser.id,
+            checkedInAt: new Date().toISOString(),
+            method,
+            arrival,
+            status: "Pending",
+          };
+          dispatch({ type: "ADD_ATTENDANCE", record });
+          await queueMutation(currentUser.authUserId || currentUser.id, "attendance", eventId, "upsert", {
+            sessionId: eventId,
+            code,
+          });
+          return { ok: true, message: "Attendance queued for offline sync." };
+        }
+        return { ok: false, message: res.error };
+      }
+
+      if (res.data) {
+        dispatch({ type: "ADD_ATTENDANCE", record: res.data });
+      }
+      return { ok: true, message: "Attendance submitted for admin approval." };
+    },
+    [currentUser, state.events]
+  );
+
+  const recordStudentQrAttendance = useCallback(
+    async (eventId: string, token: string): Promise<Result & { studentName?: string; studentId?: string }> => {
+      if (!currentUser || currentUser.role !== "admin") {
+        return { ok: false, message: "Admin access is required." };
+      }
+
+      const res = await recordAttendanceFromQr(eventId, token);
+      if (res.error || !res.data) {
+        return { ok: false, message: res.error || "Failed to record QR attendance." };
+      }
+
+      dispatch({ type: "ADD_ATTENDANCE", record: res.data });
+      return {
+        ok: true,
+        studentName: res.studentName,
+        studentId: res.studentId,
+        message: `${res.studentName || "Student"}'s attendance was recorded and approved (+40 pts).`,
+      };
+    },
+    [currentUser]
+  );
+
+  const moderateAttendance = useCallback(
+    async (recordId: string, status: "Approved" | "Rejected", note?: string): Promise<Result> => {
+      if (!currentUser || currentUser.role !== "admin") {
+        return { ok: false, message: "Admin access is required." };
+      }
+      if (status === "Rejected" && !note?.trim()) {
+        return { ok: false, message: "Add a reason or correction note." };
+      }
+
+      const res = await moderateAttendanceInSupabase(recordId, status, note);
+      if (res.error && navigator.onLine && !res.error.includes("Failed to fetch")) {
+        return { ok: false, message: res.error };
+      }
+
+      dispatch({
+        type: "MODERATE_ATTENDANCE",
+        recordId,
+        status,
+        reviewerId: currentUser.id,
+        correctionNote: note?.trim(),
+      });
+      return { ok: true, message: `Attendance ${status.toLowerCase()}.` };
+    },
+    [currentUser]
+  );
+
+  const saveNote = useCallback(
+    async (
+      input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">,
+      submit = true
+    ): Promise<Result & { noteId?: string }> => {
+      if (!currentUser || currentUser.role === "admin") {
+        return { ok: false, message: "Sign in as a student to save notes." };
+      }
+      if (!input.title.trim() || !input.subjectId) {
+        return { ok: false, message: "Add a title and subject." };
+      }
+      if (submit && !input.fileName) {
+        return { ok: false, message: "Select a local file before submitting." };
+      }
+
+      const existing = input.id ? state.notes.find((item) => item.id === input.id) : undefined;
+      const note: DemoNote = {
+        id: input.id ?? uid("note"),
+        title: input.title.trim(),
+        subjectId: input.subjectId,
+        description: input.description.trim(),
+        tags: input.tags ?? [],
+        uploaderId: currentUser.id,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: submit ? "Pending" : "Draft",
+        fileName: input.fileName,
+        fileType: input.fileType,
+        fileId: input.fileId,
+        downloads: existing?.downloads ?? 0,
+      };
+
+      const res = await createNoteDraft({
+        title: input.title.trim(),
+        subjectId: input.subjectId,
+        description: input.description.trim(),
+        tags: input.tags || [],
+      });
+
+      if (res.data && submit) {
+        await submitNoteToSupabase(res.data.id);
+      }
+
+      dispatch({ type: "UPSERT_NOTE", note: res.data || note });
+      return {
+        ok: true,
+        noteId: res.data?.id || note.id,
+        message: submit ? "Note submitted for moderation." : "Draft saved.",
+      };
+    },
+    [currentUser, state.notes]
+  );
+
+  const moderateNote = useCallback(
+    async (noteId: string, status: "Approved" | "Rejected", reason?: string): Promise<Result> => {
+      if (!currentUser || currentUser.role !== "admin") {
+        return { ok: false, message: "Admin access is required." };
+      }
+      if (status === "Rejected" && !reason?.trim()) {
+        return { ok: false, message: "A rejection reason is required." };
+      }
+
+      const res = await moderateNoteInSupabase(noteId, status, reason);
+      if (res.error && navigator.onLine && !res.error.includes("Failed to fetch")) {
+        return { ok: false, message: res.error };
+      }
+
+      dispatch({
+        type: "MODERATE_NOTE",
+        noteId,
+        status,
+        reviewerId: currentUser.id,
+        reason: reason?.trim(),
+      });
+      return { ok: true, message: `Note ${status.toLowerCase()}.` };
+    },
+    [currentUser]
+  );
+
+  const toggleFavourite = useCallback(
+    async (noteId: string): Promise<Result> => {
+      if (!currentUser || currentUser.role === "admin") {
+        return { ok: false, message: "Sign in as a student to save favourites." };
+      }
+      const note = state.notes.find((item) => item.id === noteId);
+      if (!note || note.status !== "Approved") {
+        return { ok: false, message: "Only approved notes can be added to favourites." };
+      }
+
+      const userFavs = state.favouriteNoteIds[currentUser.id] || [];
+      const isFav = userFavs.includes(noteId);
+
+      dispatch({ type: "TOGGLE_FAVOURITE", userId: currentUser.id, noteId });
+      await toggleNoteFavorite(noteId, !isFav);
+      return { ok: true };
+    },
+    [currentUser, state.favouriteNoteIds, state.notes]
+  );
+
+  const saveSubject = useCallback(
+    (input: Partial<Subject> & Pick<Subject, "code" | "name" | "yearLevel">): Result => {
+      if (!input.code.trim() || !input.name.trim()) {
+        return { ok: false, message: "Subject code and name are required." };
+      }
+      dispatch({
+        type: "UPSERT_SUBJECT",
+        subject: {
+          id: input.id ?? uid("sub"),
+          code: input.code.trim().toUpperCase(),
+          name: input.name.trim(),
+          yearLevel: input.yearLevel,
+          coordinator: input.coordinator?.trim() || "TBD",
+          active: input.active ?? true,
+        },
+      });
+      return { ok: true };
+    },
+    []
+  );
+
+  const deleteSubject = useCallback(
+    (id: string): Result => {
+      if (
+        state.events.some((event) => event.subjectId === id) ||
+        state.notes.some((note) => note.subjectId === id)
+      ) {
+        return { ok: false, message: "This subject is in use and cannot be deleted." };
+      }
+      dispatch({ type: "DELETE_SUBJECT", subjectId: id });
+      return { ok: true };
+    },
+    [state.events, state.notes]
+  );
+
+  const adjustPoints = useCallback(
+    async (userId: string, points: number, reason: string): Promise<Result> => {
+      if (!currentUser || currentUser.role !== "admin") {
+        return { ok: false, message: "Admin access is required." };
+      }
+      if (!Number.isFinite(points) || points === 0 || !reason.trim()) {
+        return { ok: false, message: "Enter a non-zero point value and reason." };
+      }
+
+      const res = await adjustPointsInSupabase(userId, points, reason);
+      if (res.error && navigator.onLine && !res.error.includes("Failed to fetch")) {
+        return { ok: false, message: res.error };
+      }
+
+      dispatch({
+        type: "ADJUST_POINTS",
+        adminId: currentUser.id,
+        transaction: res.data || {
+          id: uid("pt"),
+          userId,
+          points,
+          reason: reason.trim(),
+          createdAt: new Date().toISOString(),
+          relatedType: "Adjustment",
+        },
+      });
+      return { ok: true, message: "Points adjusted." };
+    },
+    [currentUser]
+  );
+
+  const markNotification = useCallback(async (id: string, read = true): Promise<Result> => {
+    dispatch({ type: "MARK_NOTIFICATION", id, read });
+    await markNotificationAsRead(id, read);
     return { ok: true };
   }, []);
 
-  const toggleRsvp = useCallback((eventId: string): Result => {
-    if (!currentUser || currentUser.role === "admin") return { ok: false, message: "Sign in as a student to RSVP." };
-    const event = state.events.find((item) => item.id === eventId);
-    if (!event) return { ok: false, message: "Session was not found." };
-    const existing = state.rsvps.some((item) => item.eventId === eventId && item.userId === currentUser.id);
-    const count = state.rsvps.filter((item) => item.eventId === eventId).length;
-    if (!existing && count >= event.capacity) return { ok: false, message: "This session is already full." };
-    if (!existing && ["Cancelled", "Completed"].includes(event.status)) return { ok: false, message: "RSVP is closed for this session." };
-    dispatch({ type: "TOGGLE_RSVP", userId: currentUser.id, eventId });
-
-    // ── Offline First: Queue the action for Supabase sync
-    queueMutation(
-      currentUser.id,
-      "rsvp",
-      eventId,
-      existing ? "delete" : "upsert",
-      { sessionId: eventId, studentId: currentUser.id }
-    ).catch(console.error);
-
-    return { ok: true, message: existing ? "RSVP cancelled." : "RSVP saved and added to My Schedule." };
-  }, [currentUser, state.events, state.rsvps]);
-
-  const toggleSchedule = useCallback((eventId: string): Result => {
-    if (!currentUser || currentUser.role === "admin") return { ok: false, message: "Sign in as a student to manage a schedule." };
-    dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.id, eventId });
+  const markAllNotifications = useCallback(async (): Promise<Result> => {
+    if (!currentUser) return { ok: false, message: "Not logged in" };
+    dispatch({ type: "MARK_ALL_NOTIFICATIONS", userId: currentUser.id });
+    await markAllNotificationsAsRead(currentUser.authUserId || currentUser.id);
     return { ok: true };
   }, [currentUser]);
 
-  const submitAttendance = useCallback((eventId: string, code: string, method: "Code" | "QR" = "Code"): Result => {
-    if (!currentUser || currentUser.role === "admin") return { ok: false, message: "Sign in as a student to check in." };
-    const event = state.events.find((item) => item.id === eventId);
-    if (!event) return { ok: false, message: "Session was not found." };
-    if (state.attendance.some((item) => item.eventId === eventId && item.userId === currentUser.id && item.status !== "Rejected")) return { ok: false, message: "You have already checked in to this session." };
-    if (code.trim().toUpperCase() !== event.attendanceCode.toUpperCase()) return { ok: false, message: "Invalid attendance code for the selected session." };
-    const minutes = (Date.now() - new Date(event.date).getTime()) / 60000;
-    const arrival = minutes < -10 ? "Early" : minutes <= 10 ? "On time" : "Late";
-    dispatch({ type: "ADD_ATTENDANCE", record: { id: uid("att"), eventId, userId: currentUser.id, checkedInAt: new Date().toISOString(), method, arrival, status: "Pending" } });
+  const markAnnouncementRead = useCallback(
+    async (announcementId: string): Promise<Result> => {
+      if (!currentUser) return { ok: false, message: "Not logged in" };
+      dispatch({ type: "MARK_ANNOUNCEMENT", announcementId, userId: currentUser.id });
+      await markAnnouncementAsReadInSupabase(announcementId);
+      return { ok: true };
+    },
+    [currentUser]
+  );
 
-    // ── Offline First: Queue the attendance log for Supabase sync
-    queueMutation(
-      currentUser.id,
-      "attendance",
-      eventId, // using eventId as the entityId for the mutation
-      "upsert",
-      { sessionId: eventId, studentId: currentUser.id, method, arrival }
-    ).catch(console.error);
+  const updatePreferences = useCallback(
+    (preferences: Preferences): Result => {
+      if (!currentUser) return { ok: false, message: "Not logged in" };
+      dispatch({ type: "UPDATE_PREFERENCES", userId: currentUser.id, preferences });
+      return { ok: true };
+    },
+    [currentUser]
+  );
 
-    return { ok: true, message: "Attendance submitted for admin approval." };
-  }, [currentUser, state.attendance, state.events]);
-
-  const recordStudentQrAttendance = useCallback(async (eventId: string, studentId: string, authUserId: string): Promise<Result> => {
-    if (!currentUser || currentUser.role !== "admin") return { ok: false, message: "Admin access is required." };
-    const event = state.events.find((item) => item.id === eventId);
-    if (!event) return { ok: false, message: "Select a valid session before scanning." };
-    const student = state.users.find((item) => item.studentId.toUpperCase() === studentId.toUpperCase() && item.role !== "admin" && item.active);
-    if (!student) return { ok: false, message: "This student is not available in the authenticated roster." };
-    if (student.authUserId && student.authUserId !== authUserId) return { ok: false, message: "The QR identity does not match the student profile." };
-    if (state.attendance.some((item) => item.eventId === eventId && item.userId === student.id && item.status !== "Rejected")) return { ok: false, message: "This student already has attendance for the selected session." };
-
-    const minutes = (Date.now() - new Date(event.date).getTime()) / 60000;
-    const arrival = minutes < -10 ? "Early" : minutes <= 10 ? "On time" : "Late";
-    const remote = await submitAttendanceToSupabase(eventId, authUserId, "QR", arrival);
-    if (remote.error || !remote.data?.id) return { ok: false, message: remote.error?.message ?? "Supabase could not create the attendance record." };
-
-    const record: AttendanceRecord = {
-      id: remote.data.id,
-      eventId,
-      userId: student.id,
-      checkedInAt: remote.data.scanned_at ?? new Date().toISOString(),
-      method: "QR",
-      arrival,
-      status: "Pending",
-    };
-    dispatch({ type: "ADD_ATTENDANCE", record });
-
-    const approval = await moderateAttendanceInSupabase(record.id, "Approved");
-    if (approval.error) return { ok: false, message: approval.error.message ?? "Attendance was recorded but still needs approval." };
-
-    dispatch({ type: "MODERATE_ATTENDANCE", recordId: record.id, status: "Approved", reviewerId: currentUser.id });
-    return { ok: true, message: `${student.name}'s attendance was recorded and approved.` };
-  }, [currentUser, state.attendance, state.events, state.users]);
-
-  const moderateAttendance = useCallback((recordId: string, status: "Approved" | "Rejected", note?: string): Result => {
-    if (!currentUser || currentUser.role !== "admin") return { ok: false, message: "Admin access is required." };
-    if (status === "Rejected" && !note?.trim()) return { ok: false, message: "Add a reason or correction note." };
-    dispatch({ type: "MODERATE_ATTENDANCE", recordId, status, reviewerId: currentUser.id, correctionNote: note?.trim() });
-    return { ok: true };
-  }, [currentUser]);
-
-  const saveNote = useCallback((input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">, submit = true): Result & { noteId?: string } => {
-    if (!currentUser || currentUser.role === "admin") return { ok: false, message: "Sign in as a student to save notes." };
-    if (!input.title.trim() || !input.subjectId) return { ok: false, message: "Add a title and subject." };
-    if (submit && !input.fileName) return { ok: false, message: "Select a local file before submitting." };
-    const existing = input.id ? state.notes.find((item) => item.id === input.id) : undefined;
-    const note: DemoNote = {
-      id: input.id ?? uid("note"), title: input.title.trim(), subjectId: input.subjectId, description: input.description.trim(), tags: input.tags ?? [],
-      uploaderId: currentUser.id, createdAt: existing?.createdAt ?? new Date().toISOString(), updatedAt: new Date().toISOString(), status: submit ? "Pending" : "Draft",
-      fileName: input.fileName, fileType: input.fileType, fileId: input.fileId, downloads: existing?.downloads ?? 0,
-    };
-    dispatch({ type: "UPSERT_NOTE", note });
-    if (submit) {
-      const admin = state.users.find((user) => user.role === "admin");
-      if (admin) dispatch({ type: "ADD_NOTIFICATION", notification: notification(admin.id, "Note ready for review", `${currentUser.name} submitted ${note.title}.`, "Notes", "admin-notes") });
-    }
-    return { ok: true, noteId: note.id };
-  }, [currentUser, state.notes, state.users]);
-
-  const moderateNote = useCallback((noteId: string, status: "Approved" | "Rejected", reason?: string): Result => {
-    if (!currentUser || currentUser.role !== "admin") return { ok: false, message: "Admin access is required." };
-    if (status === "Rejected" && !reason?.trim()) return { ok: false, message: "A rejection reason is required." };
-    dispatch({ type: "MODERATE_NOTE", noteId, status, reviewerId: currentUser.id, reason: reason?.trim() });
-    return { ok: true };
-  }, [currentUser]);
-
-  const toggleFavourite = useCallback((noteId: string): Result => {
-    if (!currentUser || currentUser.role === "admin") return { ok: false, message: "Sign in as a student to save favourites." };
-    const note = state.notes.find((item) => item.id === noteId);
-    if (!note || note.status !== "Approved") return { ok: false, message: "Only approved notes can be added to favourites." };
-    dispatch({ type: "TOGGLE_FAVOURITE", userId: currentUser.id, noteId });
-    return { ok: true };
-  }, [currentUser, state.notes]);
-
-  const saveSubject = useCallback((input: Partial<Subject> & Pick<Subject, "code" | "name" | "yearLevel">): Result => {
-    if (!input.code.trim() || !input.name.trim()) return { ok: false, message: "Subject code and name are required." };
-    dispatch({ type: "UPSERT_SUBJECT", subject: { id: input.id ?? uid("sub"), code: input.code.trim().toUpperCase(), name: input.name.trim(), yearLevel: input.yearLevel, coordinator: input.coordinator?.trim() || "TBD", active: input.active ?? true } });
-    return { ok: true };
-  }, []);
-
-  const deleteSubject = useCallback((id: string): Result => {
-    if (state.events.some((event) => event.subjectId === id) || state.notes.some((note) => note.subjectId === id)) return { ok: false, message: "This subject is in use by a session or note and cannot be deleted." };
-    dispatch({ type: "DELETE_SUBJECT", subjectId: id });
-    return { ok: true };
-  }, [state.events, state.notes]);
-
-  const adjustPoints = useCallback((userId: string, points: number, reason: string): Result => {
-    if (!currentUser || currentUser.role !== "admin") return { ok: false, message: "Admin access is required." };
-    if (!Number.isFinite(points) || points === 0 || !reason.trim()) return { ok: false, message: "Enter a non-zero point value and reason." };
-    dispatch({ type: "ADJUST_POINTS", adminId: currentUser.id, transaction: { id: uid("pt"), userId, points, reason: reason.trim(), createdAt: new Date().toISOString(), relatedType: "Adjustment" } });
-    return { ok: true };
-  }, [currentUser]);
-
-  const value = useMemo<AppDataContextValue>(() => ({
-    state, currentUser, currentPoints, unreadCount, login, logout: () => dispatch({ type: "LOGOUT" }), completeAccountSetup,
-    saveEvent, deleteEvent: (eventId) => dispatch({ type: "DELETE_EVENT", eventId }), toggleRsvp, toggleSchedule, submitAttendance, recordStudentQrAttendance, moderateAttendance,
-    saveNote, moderateNote, toggleFavourite, markNotification: (id, read = true) => dispatch({ type: "MARK_NOTIFICATION", id, read }),
-    markAllNotifications: () => currentUser && dispatch({ type: "MARK_ALL_NOTIFICATIONS", userId: currentUser.id }), deleteNotification: (id) => dispatch({ type: "DELETE_NOTIFICATION", id }),
-    clearNotifications: () => currentUser && dispatch({ type: "CLEAR_NOTIFICATIONS", userId: currentUser.id }), saveSubject, deleteSubject,
-    saveUser: (user) => dispatch({ type: "UPDATE_USER", user }), adjustPoints, markAnnouncementRead: (announcementId) => currentUser && dispatch({ type: "MARK_ANNOUNCEMENT", announcementId, userId: currentUser.id }),
-    updatePreferences: (preferences) => currentUser && dispatch({ type: "UPDATE_PREFERENCES", userId: currentUser.id, preferences }),
-  }), [adjustPoints, completeAccountSetup, currentPoints, currentUser, deleteSubject, login, moderateAttendance, moderateNote, recordStudentQrAttendance, saveEvent, saveNote, saveSubject, state, submitAttendance, toggleFavourite, toggleRsvp, toggleSchedule, unreadCount]);
+  const value = useMemo<AppDataContextValue>(
+    () => ({
+      state,
+      currentUser,
+      currentPoints,
+      unreadCount,
+      authInitializing,
+      login,
+      logout,
+      completeAccountSetup,
+      saveEvent,
+      deleteEvent,
+      toggleRsvp,
+      toggleSchedule,
+      submitAttendance,
+      recordStudentQrAttendance,
+      moderateAttendance,
+      saveNote,
+      moderateNote,
+      toggleFavourite,
+      markNotification,
+      markAllNotifications,
+      deleteNotification: (id: string) => {
+        dispatch({ type: "DELETE_NOTIFICATION", id });
+        return { ok: true };
+      },
+      clearNotifications: () => {
+        if (!currentUser) return { ok: false, message: "Not logged in" };
+        dispatch({ type: "CLEAR_NOTIFICATIONS", userId: currentUser.id });
+        return { ok: true };
+      },
+      saveSubject,
+      deleteSubject,
+      saveUser: (user: DemoUser) => {
+        dispatch({ type: "UPDATE_USER", user });
+        return { ok: true };
+      },
+      adjustPoints,
+      markAnnouncementRead,
+      updatePreferences,
+    }),
+    [
+      state,
+      currentUser,
+      currentPoints,
+      unreadCount,
+      authInitializing,
+      login,
+      logout,
+      completeAccountSetup,
+      saveEvent,
+      deleteEvent,
+      toggleRsvp,
+      toggleSchedule,
+      submitAttendance,
+      recordStudentQrAttendance,
+      moderateAttendance,
+      saveNote,
+      moderateNote,
+      toggleFavourite,
+      markNotification,
+      markAllNotifications,
+      saveSubject,
+      deleteSubject,
+      adjustPoints,
+      markAnnouncementRead,
+      updatePreferences,
+    ]
+  );
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
 }
 
-export function useAppData() {
+export function useAppData(): AppDataContextValue {
   const context = useContext(AppDataContext);
-  if (!context) throw new Error("useAppData must be used inside AppDataProvider");
+  if (!context) {
+    throw new Error("useAppData must be used within an AppDataProvider");
+  }
   return context;
 }
 
-export function getUserPoints(state: DemoState, userId: string) {
-  return state.points.filter((item) => item.userId === userId).reduce((sum, item) => sum + item.points, 0);
+export function getUserPoints(state: DemoState, userId: string): number {
+  return state.points
+    .filter((p) => p.userId === userId)
+    .reduce((sum, p) => sum + p.points, 0);
 }
 
-export function getRsvpCount(state: DemoState, eventId: string) {
-  return state.rsvps.filter((item) => item.eventId === eventId).length;
+export function getRsvpCount(state: DemoState, eventId: string): number {
+  return state.rsvps.filter((r) => r.eventId === eventId).length;
 }
 
 export function effectiveEventStatus(event: DemoEvent): SessionStatus {
-  if (["Cancelled", "Draft"].includes(event.status)) return event.status;
   const now = Date.now();
-  if (now > new Date(event.endDate).getTime()) return "Completed";
-  if (now >= new Date(event.date).getTime()) return "Live";
+  const start = new Date(event.date).getTime();
+  const end = new Date(event.endDate).getTime();
+  if (event.status === "Cancelled" || event.status === "Draft") return event.status;
+  if (now >= start && now <= end) return "Live";
+  if (now > end) return "Completed";
   return "Upcoming";
 }

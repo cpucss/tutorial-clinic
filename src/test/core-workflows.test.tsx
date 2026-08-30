@@ -6,7 +6,7 @@ import App from "../app/App";
 import { AppDataProvider, appDataReducer } from "../context/AppDataContext";
 import { createSeedState, DEMO_STORAGE_KEY } from "../data/seed";
 import { attendanceService } from "../services";
-import { buildStudentAttendanceQrPayload, parseStudentAttendanceQrPayload } from "../features/attendance/qr";
+import { isValidOpaqueQrToken } from "../features/attendance/qr";
 
 function renderApp() {
   return render(<HashRouter><AppDataProvider><App /></AppDataProvider></HashRouter>);
@@ -78,11 +78,11 @@ describe("core front-end demo workflows", () => {
     expect(attendanceService.hasDuplicate(seed, "stu-208", "evt-3")).toBe(false);
   });
 
-  it("builds and validates personal student attendance QR payloads", () => {
-    const credential = { userId: "3cf559c4-b961-4f59-965a-60fab82ed1ca", studentId: "24-1234-56", nonce: "random-token", issuedAt: 1_000, expiresAt: 301_000 };
-    const payload = buildStudentAttendanceQrPayload(credential);
-    expect(parseStudentAttendanceQrPayload(payload)).toEqual(credential);
-    expect(parseStudentAttendanceQrPayload("https://example.com/not-an-attendance-code")).toBeNull();
+  it("validates opaque single-use server QR tokens without client identity fields", () => {
+    const validServerToken = "a1b2c3d4e5f67890123456789abcdef0a1b2c3d4e5f67890123456789abcdef0";
+    expect(isValidOpaqueQrToken(validServerToken)).toBe(true);
+    expect(isValidOpaqueQrToken("")).toBe(false);
+    expect(isValidOpaqueQrToken("https://example.com/not-an-attendance-code")).toBe(false);
   });
 
   it("opens the student's personal attendance QR from the mobile dock", async () => {

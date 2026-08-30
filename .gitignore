@@ -41,3 +41,5 @@ src/data/admin_list.json
 *.sln
 *.sw?
 node_modules/.vite
+# Local Vercel and editor cache
+.vercel
