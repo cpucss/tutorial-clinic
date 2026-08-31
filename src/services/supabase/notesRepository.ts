@@ -3,6 +3,10 @@ import type { DemoNote, DemoNoteStatus } from "../../types/app";
 import type { Database } from "../../types/database.types";
 
 type NoteRow = Database["public"]["Tables"]["notes"]["Row"];
+type NoteFileRow = Database["public"]["Tables"]["note_files"]["Row"];
+
+const NOTE_COLUMNS = "id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, created_at, updated_at";
+const NOTE_FILE_COLUMNS = "id, note_id, uploader_id, storage_path, file_name, mime_type, size_bytes, created_at";
 
 function mapNoteRow(row: NoteRow): DemoNote {
   return {
@@ -25,44 +29,79 @@ function mapNoteRow(row: NoteRow): DemoNote {
   };
 }
 
+function withFile(note: DemoNote, file?: NoteFileRow): DemoNote {
+  if (!file) return note;
+  return {
+    ...note,
+    fileName: file.file_name,
+    fileType: file.mime_type,
+    fileId: file.storage_path,
+  };
+}
+
+async function attachLatestFiles(rows: NoteRow[]): Promise<{ data: DemoNote[] | null; error: string | null }> {
+  const notes = rows.map(mapNoteRow);
+  if (!rows.length) return { data: notes, error: null };
+
+  const { data: files, error } = await supabase
+    .from("note_files")
+    .select(NOTE_FILE_COLUMNS)
+    .in("note_id", rows.map((row) => row.id))
+    .order("created_at", { ascending: false });
+
+  if (error) return { data: null, error: error.message };
+
+  const latestByNote = new Map<string, NoteFileRow>();
+  for (const file of files || []) {
+    if (!latestByNote.has(file.note_id)) latestByNote.set(file.note_id, file);
+  }
+
+  return {
+    data: notes.map((note) => withFile(note, latestByNote.get(note.id))),
+    error: null,
+  };
+}
+
 // Retrieves all approved notes for students
 export async function getApprovedNotes(): Promise<{ data: DemoNote[] | null; error: string | null }> {
   const { data, error } = await supabase
     .from("notes")
-    .select("id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, created_at, updated_at")
+    .select(NOTE_COLUMNS)
     .eq("status", "Approved")
     .order("created_at", { ascending: false });
 
   if (error) return { data: null, error: error.message };
-  return { data: (data || []).map(mapNoteRow), error: null };
+  return attachLatestFiles(data || []);
 }
 
 // Retrieves notes uploaded by the current user
 export async function getMyNotes(userId: string): Promise<{ data: DemoNote[] | null; error: string | null }> {
   const { data, error } = await supabase
     .from("notes")
-    .select("id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, created_at, updated_at")
+    .select(NOTE_COLUMNS)
     .eq("uploader_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) return { data: null, error: error.message };
-  return { data: (data || []).map(mapNoteRow), error: null };
+  return attachLatestFiles(data || []);
 }
 
 // Retrieves pending notes for admin moderation
 export async function getPendingNotes(): Promise<{ data: DemoNote[] | null; error: string | null }> {
   const { data, error } = await supabase
     .from("notes")
-    .select("id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, created_at, updated_at")
+    .select(NOTE_COLUMNS)
     .eq("status", "Pending")
     .order("created_at", { ascending: false });
 
   if (error) return { data: null, error: error.message };
-  return { data: (data || []).map(mapNoteRow), error: null };
+  return attachLatestFiles(data || []);
 }
 
-// Creates a draft note
-export async function createNoteDraft(input: {
+// Creates or updates one authoritative draft. Existing IDs are updated instead
+// of inserted, preventing an edited draft from becoming a duplicate row.
+export async function saveNoteDraft(input: {
+  noteId?: string;
   title: string;
   subjectId: string;
   description: string;
@@ -71,23 +110,39 @@ export async function createNoteDraft(input: {
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) return { data: null, error: "Not authenticated" };
 
-  const { data, error } = await supabase
-    .from("notes")
-    .insert([
-      {
-        title: input.title,
-        subject_id: input.subjectId,
-        description: input.description,
-        tags: input.tags,
-        uploader_id: userData.user.id,
-        status: "Draft",
-      },
-    ])
-    .select()
-    .single();
+  const payload = {
+    title: input.title,
+    subject_id: input.subjectId,
+    description: input.description,
+    tags: input.tags,
+    uploader_id: userData.user.id,
+    status: "Draft" as const,
+    rejection_reason: null,
+    moderated_at: null,
+    moderated_by: null,
+  };
+
+  const query = input.noteId
+    ? supabase
+        .from("notes")
+        .update(payload)
+        .eq("id", input.noteId)
+        .eq("uploader_id", userData.user.id)
+    : supabase.from("notes").insert([payload]);
+
+  const { data, error } = await query.select().single();
 
   if (error) return { data: null, error: error.message };
   return { data: mapNoteRow(data), error: null };
+}
+
+export async function createNoteDraft(input: {
+  title: string;
+  subjectId: string;
+  description: string;
+  tags: string[];
+}): Promise<{ data: DemoNote | null; error: string | null }> {
+  return saveNoteDraft(input);
 }
 
 // Uploads a file to the private tutorial-notes storage bucket and records metadata
@@ -127,6 +182,48 @@ export async function uploadNoteFile(
   if (metaError) return { filePath: null, error: metaError.message };
 
   return { filePath: storagePath, error: null };
+}
+
+export async function replaceNoteFile(
+  noteId: string,
+  file: File
+): Promise<{ file: { path: string; name: string; type: string } | null; error: string | null; warning?: string }> {
+  const { data: existingFiles, error: existingError } = await supabase
+    .from("note_files")
+    .select(NOTE_FILE_COLUMNS)
+    .eq("note_id", noteId)
+    .order("created_at", { ascending: false });
+
+  if (existingError) return { file: null, error: existingError.message };
+
+  const uploaded = await uploadNoteFile(noteId, file);
+  if (uploaded.error || !uploaded.filePath) {
+    return { file: null, error: uploaded.error || "File upload failed." };
+  }
+
+  const oldFiles = (existingFiles || []).filter((item) => item.storage_path !== uploaded.filePath);
+  let warning: string | undefined;
+  if (oldFiles.length) {
+    const oldPaths = oldFiles.map((item) => item.storage_path);
+    const { error: storageError } = await supabase.storage.from("tutorial-notes").remove(oldPaths);
+    if (storageError) {
+      warning = "The new file was saved, but an older file could not be removed automatically.";
+    } else {
+      const { error: metadataError } = await supabase
+        .from("note_files")
+        .delete()
+        .in("id", oldFiles.map((item) => item.id));
+      if (metadataError) {
+        warning = "The new file was saved, but older file metadata needs cleanup.";
+      }
+    }
+  }
+
+  return {
+    file: { path: uploaded.filePath, name: file.name, type: file.type || "application/octet-stream" },
+    error: null,
+    warning,
+  };
 }
 
 // Submits a note for moderation

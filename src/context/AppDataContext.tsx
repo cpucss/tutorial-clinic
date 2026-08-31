@@ -1,13 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from "react";
 import { queueMutation } from "../offline/outboxRepository";
+import { clearUserOfflineCache } from "../offline/database";
 import { setupAutoSync } from "../sync/syncEngine";
 import {
   getSessions,
   saveSession,
   deleteSession as deleteSessionFromSupabase,
   getUserRsvps,
+  getSavedSessionIds,
+  setSavedSession,
   setRsvp as setRsvpInSupabase,
   getSubjects,
+  upsertSubject as upsertSubjectInSupabase,
+  deleteSubjectRecord as deleteSubjectRecordInSupabase,
 } from "../services/supabase/sessionRepository";
 import {
   getAttendance,
@@ -19,7 +24,8 @@ import {
   getApprovedNotes,
   getMyNotes,
   getPendingNotes,
-  createNoteDraft,
+  saveNoteDraft,
+  replaceNoteFile,
   submitNote as submitNoteToSupabase,
   moderateNote as moderateNoteInSupabase,
   toggleNoteFavorite,
@@ -37,14 +43,20 @@ import {
   markAnnouncementAsRead as markAnnouncementAsReadInSupabase,
 } from "../services/supabase/notificationsRepository";
 import {
-  signInStudent,
   signOut as signOutFromSupabase,
   updatePassword,
+  deferPasswordChange,
   subscribeToAuth,
 } from "../services/supabase/authAdapter";
-import { getProfiles } from "../services/supabase/profileRepository";
+import type { AuthProfile } from "../services/supabase/authAdapter";
+import {
+  adminUpdateProfile as adminUpdateProfileInSupabase,
+  getMyPreferences,
+  getProfiles,
+  saveMyPreferences,
+} from "../services/supabase/profileRepository";
 
-import { createSeedState, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
+import { createEmptyState, createSeedState, DEMO_STATE_VERSION, DEMO_STORAGE_KEY } from "../data/seed";
 import type {
   AttendanceRecord,
   DemoEvent,
@@ -52,7 +64,6 @@ import type {
   DemoNotification,
   DemoState,
   DemoUser,
-  NotificationType,
   PointTransaction,
   Preferences,
   SessionStatus,
@@ -65,7 +76,7 @@ export type AppDataAction =
   | { type: "SET_INITIAL_STATE"; state: DemoState }
   | { type: "LOGIN"; userId: string }
   | { type: "LOGOUT" }
-  | { type: "COMPLETE_SETUP"; userId: string; skipped: boolean }
+  | { type: "SET_ACCOUNT_SETUP"; userId: string; completed: boolean; skipped: boolean; promptDismissedAt?: string }
   | { type: "UPSERT_EVENT"; event: DemoEvent }
   | { type: "DELETE_EVENT"; eventId: string }
   | { type: "SET_EVENTS"; events: DemoEvent[] }
@@ -73,11 +84,15 @@ export type AppDataAction =
   | { type: "SET_RSVPS"; rsvps: DemoState["rsvps"] }
   | { type: "TOGGLE_RSVP"; userId: string; eventId: string }
   | { type: "TOGGLE_SCHEDULE"; userId: string; eventId: string }
+  | { type: "SET_SCHEDULE"; userId: string; eventIds: string[] }
   | { type: "ADD_ATTENDANCE"; record: AttendanceRecord }
   | { type: "SET_ATTENDANCE"; attendance: AttendanceRecord[] }
   | { type: "MODERATE_ATTENDANCE"; recordId: string; status: "Approved" | "Rejected"; reviewerId: string; correctionNote?: string }
   | { type: "UPSERT_NOTE"; note: DemoNote }
   | { type: "SET_NOTES"; notes: DemoNote[] }
+  | { type: "MERGE_NOTES"; notes: DemoNote[] }
+  | { type: "RECONCILE_NOTES"; notes: DemoNote[]; statuses: DemoNote["status"][] }
+  | { type: "RECONCILE_MY_NOTES"; notes: DemoNote[]; userIds: string[] }
   | { type: "MODERATE_NOTE"; noteId: string; status: "Approved" | "Rejected"; reviewerId: string; reason?: string }
   | { type: "TOGGLE_FAVOURITE"; userId: string; noteId: string }
   | { type: "SET_FAVOURITES"; noteIds: string[]; userId: string }
@@ -91,6 +106,7 @@ export type AppDataAction =
   | { type: "DELETE_SUBJECT"; subjectId: string }
   | { type: "UPDATE_USER"; user: DemoUser }
   | { type: "SET_USERS"; users: DemoUser[] }
+  | { type: "MERGE_USERS"; users: DemoUser[] }
   | { type: "ADJUST_POINTS"; transaction: PointTransaction; adminId: string }
   | { type: "SET_POINTS"; points: PointTransaction[] }
   | { type: "SET_ANNOUNCEMENTS"; announcements: DemoState["announcements"] }
@@ -138,7 +154,7 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
         ...state,
         currentUserId: null,
       };
-    case "COMPLETE_SETUP":
+    case "SET_ACCOUNT_SETUP":
       return {
         ...state,
         users: state.users.map((u) =>
@@ -146,9 +162,11 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
             ? {
                 ...u,
                 accountSetup: {
-                  completed: true,
-                  completedAt: new Date().toISOString(),
+                  completed: action.completed,
+                  completedAt: action.completed ? new Date().toISOString() : undefined,
                   skipped: action.skipped,
+                  mustChangePassword: !action.completed,
+                  promptDismissedAt: action.promptDismissedAt,
                 },
               }
             : u
@@ -218,6 +236,14 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
         },
       };
     }
+    case "SET_SCHEDULE":
+      return {
+        ...state,
+        scheduleEventIds: {
+          ...state.scheduleEventIds,
+          [action.userId]: action.eventIds,
+        },
+      };
     case "ADD_ATTENDANCE":
       return {
         ...state,
@@ -283,6 +309,33 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
     }
     case "SET_NOTES":
       return { ...state, notes: action.notes };
+    case "MERGE_NOTES":
+      return {
+        ...state,
+        notes: Array.from(
+          new Map([...state.notes, ...action.notes].map((note) => [note.id, note])).values()
+        ),
+      };
+    case "RECONCILE_NOTES": {
+      const incomingIds = new Set(action.notes.map((note) => note.id));
+      const retained = state.notes.filter(
+        (note) => !action.statuses.includes(note.status) || incomingIds.has(note.id)
+      );
+      return {
+        ...state,
+        notes: Array.from(new Map([...retained, ...action.notes].map((note) => [note.id, note])).values()),
+      };
+    }
+    case "RECONCILE_MY_NOTES": {
+      const incomingIds = new Set(action.notes.map((note) => note.id));
+      const retained = state.notes.filter(
+        (note) => !action.userIds.includes(note.uploaderId) || incomingIds.has(note.id)
+      );
+      return {
+        ...state,
+        notes: Array.from(new Map([...retained, ...action.notes].map((note) => [note.id, note])).values()),
+      };
+    }
     case "MODERATE_NOTE": {
       const note = state.notes.find((n) => n.id === action.noteId);
       if (!note) return state;
@@ -401,6 +454,20 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
       };
     case "SET_USERS":
       return { ...state, users: action.users };
+    case "MERGE_USERS": {
+      const users = [...state.users];
+      for (const incoming of action.users) {
+        const index = users.findIndex(
+          (user) => user.id === incoming.id || user.authUserId === incoming.authUserId || user.studentId === incoming.studentId
+        );
+        if (index >= 0) {
+          users[index] = { ...users[index], ...incoming, id: users[index].id };
+        } else {
+          users.push(incoming);
+        }
+      }
+      return { ...state, users };
+    }
     case "ADJUST_POINTS": {
       const notif: DemoNotification = {
         id: uid("notif"),
@@ -449,29 +516,29 @@ export type AppDataContextValue = {
   currentPoints: number;
   unreadCount: number;
   authInitializing: boolean;
-  login: (studentId: string, name?: string, supabaseRole?: string, authUserId?: string, password?: string) => Result;
+  login: (studentId: string, profile: AuthProfile, authUserId: string, email: string) => Result;
   logout: () => void;
   completeAccountSetup: (password: string, skip?: boolean) => Promise<Result>;
   saveEvent: (input: Partial<DemoEvent> & Pick<DemoEvent, "title" | "subjectId" | "date" | "endDate" | "venue" | "capacity">) => Promise<Result>;
   deleteEvent: (eventId: string) => Promise<Result>;
   toggleRsvp: (eventId: string) => Promise<Result>;
-  toggleSchedule: (eventId: string) => Result;
+  toggleSchedule: (eventId: string) => Promise<Result>;
   submitAttendance: (eventId: string, code: string, method?: "Code" | "QR") => Promise<Result>;
   recordStudentQrAttendance: (eventId: string, token: string) => Promise<Result & { studentName?: string; studentId?: string }>;
   moderateAttendance: (recordId: string, status: "Approved" | "Rejected", note?: string) => Promise<Result>;
-  saveNote: (input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">, submit?: boolean) => Promise<Result & { noteId?: string }>;
+  saveNote: (input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">, submit?: boolean, file?: File | null) => Promise<Result & { noteId?: string; note?: DemoNote }>;
   moderateNote: (noteId: string, status: "Approved" | "Rejected", reason?: string) => Promise<Result>;
   toggleFavourite: (noteId: string) => Promise<Result>;
   markNotification: (id: string, read?: boolean) => Promise<Result>;
   markAllNotifications: () => Promise<Result>;
   deleteNotification: (id: string) => Result;
   clearNotifications: () => Result;
-  saveSubject: (input: Partial<Subject> & Pick<Subject, "code" | "name" | "yearLevel">) => Result;
-  deleteSubject: (id: string) => Result;
-  saveUser: (user: DemoUser) => Result;
+  saveSubject: (input: Partial<Subject> & Pick<Subject, "code" | "name" | "yearLevel">) => Promise<Result>;
+  deleteSubject: (id: string) => Promise<Result>;
+  saveUser: (user: DemoUser) => Promise<Result>;
   adjustPoints: (userId: string, points: number, reason: string) => Promise<Result>;
   markAnnouncementRead: (announcementId: string) => Promise<Result>;
-  updatePreferences: (preferences: Preferences) => Result;
+  updatePreferences: (preferences: Preferences) => Promise<Result>;
 };
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
@@ -487,7 +554,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Fallback to seed state
     }
-    return createSeedState();
+    return import.meta.env.MODE === "production" ? createEmptyState() : createSeedState();
   });
 
   const [authInitializing, setAuthInitializing] = useState(true);
@@ -501,12 +568,6 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state]);
 
-  // Setup offline background sync
-  useEffect(() => {
-    const cleanup = setupAutoSync();
-    return () => cleanup();
-  }, []);
-
   // Listen to Supabase auth state changes
   useEffect(() => {
     const unsubscribe = subscribeToAuth((account) => {
@@ -514,9 +575,18 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         const studentId = account.profile.studentId.toUpperCase();
         let matchedUser = state.users.find((u) => u.studentId.toUpperCase() === studentId || u.authUserId === account.user.id);
 
+        const mustChangePassword = Boolean(account.profile.mustChangePassword);
+        const completed = Boolean(account.profile.accountSetupCompleted) || !mustChangePassword;
+        const accountSetup = {
+          completed,
+          skipped: !completed && Boolean(account.profile.passwordPromptDismissedAt),
+          mustChangePassword,
+          promptDismissedAt: account.profile.passwordPromptDismissedAt,
+        };
+
         if (!matchedUser) {
           matchedUser = {
-            id: uid("stu"),
+            id: account.profile.id,
             authUserId: account.user.id,
             studentId,
             name: account.profile.name || "Student",
@@ -526,13 +596,22 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
             program: account.profile.program || "BS Computer Science",
             section: account.profile.section || "A",
             active: account.profile.active,
-            accountSetup: {
-              completed: Boolean(account.profile.accountSetupCompleted),
-            },
+            accountSetup,
           };
-          dispatch({ type: "SET_USERS", users: [...state.users, matchedUser] });
-        } else if (!matchedUser.authUserId) {
-          matchedUser = { ...matchedUser, authUserId: account.user.id };
+          dispatch({ type: "MERGE_USERS", users: [matchedUser] });
+        } else {
+          matchedUser = {
+            ...matchedUser,
+            authUserId: account.user.id,
+            name: account.profile.name || matchedUser.name,
+            email: account.user.email || matchedUser.email,
+            role: account.profile.role,
+            yearLevel: account.profile.yearLevel,
+            program: account.profile.program,
+            section: account.profile.section,
+            active: account.profile.active,
+            accountSetup,
+          };
           dispatch({ type: "UPDATE_USER", user: matchedUser });
         }
 
@@ -578,16 +657,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
           dispatch({ type: "SET_NOTES", notes: uniqueNotes });
         }
         if (annRes.data) {
-          const mappedAnn = annRes.data.map((row: any) => ({
-            id: row.id,
-            title: row.title,
-            body: row.body,
-            publishedAt: row.published_at || row.created_at,
-            pinned: Boolean(row.pinned),
-            audience: row.audience || "All",
-            readBy: [],
-          }));
-          dispatch({ type: "SET_ANNOUNCEMENTS", announcements: mappedAnn });
+          dispatch({ type: "SET_ANNOUNCEMENTS", announcements: annRes.data });
         }
         if (profilesRes.data && profilesRes.data.length > 0) {
           const users: DemoUser[] = profilesRes.data.map((p) => ({
@@ -602,13 +672,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
             section: p.section,
             active: p.active,
             accountSetup: {
-              completed: p.accountSetupCompleted,
+              completed: p.accountSetupCompleted || !p.mustChangePassword,
+              skipped: !p.accountSetupCompleted && p.mustChangePassword && Boolean(p.passwordPromptDismissedAt),
+              mustChangePassword: p.mustChangePassword,
+              promptDismissedAt: p.passwordPromptDismissedAt,
             },
           }));
-          dispatch({ type: "SET_USERS", users });
+          dispatch({ type: "MERGE_USERS", users });
         }
       } catch (err) {
-        console.warn("Could not reach Supabase backend. Running in offline/demo mode.", err);
+        console.warn("Could not refresh application data.", err);
       }
     }
 
@@ -623,16 +696,41 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return state.users.find((u) => u.id === state.currentUserId);
   }, [state.currentUserId, state.users]);
 
-  // Load user-specific records upon login
-  useEffect(() => {
+  const loadSharedRecords = useCallback(async () => {
+    try {
+      const [subjectsResult, sessionsResult, approvedResult, announcementsResult] = await Promise.all([
+        getSubjects(),
+        getSessions(),
+        getApprovedNotes(),
+        getAnnouncements(),
+      ]);
+      const pendingResult = currentUser?.role === "admin" ? await getPendingNotes() : null;
+
+      if (subjectsResult.data) dispatch({ type: "SET_SUBJECTS", subjects: subjectsResult.data });
+      if (sessionsResult.data) dispatch({ type: "SET_EVENTS", events: sessionsResult.data });
+      if (approvedResult.data) {
+        dispatch({ type: "RECONCILE_NOTES", notes: approvedResult.data, statuses: ["Approved"] });
+      }
+      if (pendingResult?.data) {
+        dispatch({ type: "RECONCILE_NOTES", notes: pendingResult.data, statuses: ["Pending"] });
+      }
+      if (announcementsResult.data) dispatch({ type: "SET_ANNOUNCEMENTS", announcements: announcementsResult.data });
+    } catch (error) {
+      console.warn("Could not refresh shared records.", error);
+    }
+  }, [currentUser?.role]);
+
+  const loadUserRecords = useCallback(async () => {
     if (!currentUser) return;
     const userId = currentUser.authUserId || currentUser.id;
 
-    async function loadUserRecords() {
-      const [rsvpsRes, attRes, myNotesRes, favsRes, pointsRes, notifsRes] =
+    try {
+      const [rsvpsRes, savedSessionsRes, preferencesRes, attRes, myNotesRes, favsRes, pointsRes, notifsRes] =
         await Promise.all([
-          getUserRsvps(userId),
-          getAttendance(currentUser?.role === "admin" ? undefined : userId),
+          getUserRsvps(currentUser.role === "admin" ? undefined : userId),
+          currentUser.role === "admin" ? Promise.resolve({ data: [], error: null }) : getSavedSessionIds(),
+          getMyPreferences(),
+          getAttendance(currentUser.role === "admin" ? undefined : userId),
           getMyNotes(userId),
           getFavoriteNoteIds(),
           getPointHistory(userId),
@@ -640,34 +738,57 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         ]);
 
       if (rsvpsRes.data) dispatch({ type: "SET_RSVPS", rsvps: rsvpsRes.data });
+      if (savedSessionsRes.data) dispatch({ type: "SET_SCHEDULE", userId: currentUser.id, eventIds: savedSessionsRes.data });
+      if (preferencesRes.data) dispatch({ type: "UPDATE_PREFERENCES", userId: currentUser.id, preferences: preferencesRes.data });
       if (attRes.data) dispatch({ type: "SET_ATTENDANCE", attendance: attRes.data });
-      if (myNotesRes.data) {
-        dispatch({
-          type: "SET_NOTES",
-          notes: Array.from(new Map([...state.notes, ...myNotesRes.data].map((n) => [n.id, n])).values()),
-        });
-      }
-      if (favsRes.data && currentUser) {
+      if (myNotesRes.data) dispatch({ type: "RECONCILE_MY_NOTES", notes: myNotesRes.data, userIds: [currentUser.id, userId] });
+      if (favsRes.data) {
         dispatch({ type: "SET_FAVOURITES", userId: currentUser.id, noteIds: favsRes.data });
       }
       if (pointsRes.data) dispatch({ type: "SET_POINTS", points: pointsRes.data });
-      if (notifsRes.data) {
-        const notifs: DemoNotification[] = notifsRes.data.map((row: any) => ({
-          id: row.id,
-          userId: row.user_id,
-          title: row.title,
-          message: row.message,
-          type: (row.type as NotificationType) || "System",
-          createdAt: row.created_at,
-          readAt: row.read_at || undefined,
-          relatedTab: row.related_tab || undefined,
-        }));
-        dispatch({ type: "SET_NOTIFICATIONS", notifications: notifs });
-      }
+      if (notifsRes.data) dispatch({ type: "SET_NOTIFICATIONS", notifications: notifsRes.data });
+    } catch (error) {
+      console.warn("Could not refresh account data.", error);
     }
-
-    loadUserRecords();
   }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser) void loadSharedRecords();
+  }, [currentUser, loadSharedRecords]);
+
+  useEffect(() => {
+    void loadUserRecords();
+  }, [loadUserRecords]);
+
+  // Queue processing is always partitioned by the authenticated user. Refresh
+  // authorized records on reconnect, focus, and a conservative visible-tab poll.
+  useEffect(() => {
+    if (!currentUser) return;
+    const userId = currentUser.authUserId || currentUser.id;
+    return setupAutoSync(userId);
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const refreshUser = () => {
+      if (navigator.onLine && document.visibilityState === "visible") void loadUserRecords();
+    };
+    const refreshAll = () => {
+      if (navigator.onLine && document.visibilityState === "visible") {
+        void Promise.all([loadUserRecords(), loadSharedRecords()]);
+      }
+    };
+    const intervalId = window.setInterval(refreshUser, 60000);
+    window.addEventListener("online", refreshAll);
+    window.addEventListener("focus", refreshAll);
+    document.addEventListener("visibilitychange", refreshAll);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("online", refreshAll);
+      window.removeEventListener("focus", refreshAll);
+      document.removeEventListener("visibilitychange", refreshAll);
+    };
+  }, [currentUser, loadSharedRecords, loadUserRecords]);
 
   const currentPoints = useMemo(() => {
     if (!currentUser) return 0;
@@ -678,55 +799,65 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   const unreadCount = useMemo(() => {
     if (!currentUser) return 0;
-    return state.notifications.filter(
+    const accountReminder = currentUser.accountSetup.mustChangePassword && currentUser.accountSetup.skipped ? 1 : 0;
+    return accountReminder + state.notifications.filter(
       (n) => (n.userId === currentUser.id || n.userId === currentUser.authUserId) && !n.readAt
     ).length;
   }, [currentUser, state.notifications]);
 
   const login = useCallback(
-    (studentId: string, name?: string, supabaseRole?: string, authUserId?: string, password?: string): Result => {
+    (studentId: string, profile: AuthProfile, authUserId: string, email: string): Result => {
       const normalizedId = studentId.trim().toUpperCase();
-      if (!/^\d{4}-\d{5}$/.test(normalizedId)) {
-        return { ok: false, message: "Invalid Student ID format. Use YYYY-00000." };
+      if (!/^\d{2}-\d{4}-\d{2}(?:-ADMIN)?$/i.test(normalizedId) && !/^\d{4}-\d{5}$/.test(normalizedId)) {
+        return { ok: false, message: "Invalid Student ID format." };
       }
 
       let user = state.users.find(
-        (u) => u.studentId.toUpperCase() === normalizedId || (authUserId && u.authUserId === authUserId)
+        (u) => u.studentId.toUpperCase() === normalizedId || u.authUserId === authUserId
       );
 
+      const mustChangePassword = Boolean(profile.mustChangePassword);
+      const completed = Boolean(profile.accountSetupCompleted) || !mustChangePassword;
+      const accountSetup = {
+        completed,
+        skipped: !completed && Boolean(profile.passwordPromptDismissedAt),
+        mustChangePassword,
+        promptDismissedAt: profile.passwordPromptDismissedAt,
+      };
+
       if (!user) {
-        const isDefaultAdmin = normalizedId === "2021-00001";
         user = {
-          id: uid("stu"),
+          id: profile.id,
           authUserId,
           studentId: normalizedId,
-          name: name || (isDefaultAdmin ? "Admin User" : "New Student"),
-          email: `${normalizedId.toLowerCase()}@cpu.edu.ph`,
-          role: (supabaseRole as DemoUser["role"]) || (isDefaultAdmin ? "admin" : "student"),
-          yearLevel: "Freshman",
-          program: "BS Computer Science",
-          section: "A",
-          active: true,
-          accountSetup: {
-            completed: !isDefaultAdmin ? false : true,
-          },
+          name: profile.name,
+          email,
+          role: profile.role,
+          yearLevel: profile.yearLevel,
+          program: profile.program,
+          section: profile.section,
+          active: profile.active,
+          accountSetup,
         };
-        dispatch({ type: "SET_USERS", users: [...state.users, user] });
+        dispatch({ type: "MERGE_USERS", users: [user] });
       } else {
-        if (authUserId && !user.authUserId) {
-          user = { ...user, authUserId };
-          dispatch({ type: "UPDATE_USER", user });
-        }
+        user = {
+          ...user,
+          authUserId,
+          name: profile.name,
+          email,
+          role: profile.role,
+          yearLevel: profile.yearLevel,
+          program: profile.program,
+          section: profile.section,
+          active: profile.active,
+          accountSetup,
+        };
+        dispatch({ type: "UPDATE_USER", user });
       }
 
       if (!user.active) {
         return { ok: false, message: "This account has been deactivated. Contact an administrator." };
-      }
-
-      if (password) {
-        signInStudent(normalizedId, password).catch(() => {
-          // Keep local session if backend auth is offline
-        });
       }
 
       dispatch({ type: "LOGIN", userId: user.id });
@@ -736,21 +867,36 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    signOutFromSupabase().catch(() => {});
+    const userId = currentUser?.authUserId || currentUser?.id;
     dispatch({ type: "LOGOUT" });
-  }, []);
+    void Promise.allSettled([
+      signOutFromSupabase(),
+      userId ? clearUserOfflineCache(userId) : Promise.resolve(),
+    ]);
+  }, [currentUser]);
 
   const completeAccountSetup = useCallback(
     async (password: string, skip = false): Promise<Result> => {
       if (!currentUser) return { ok: false, message: "No active session" };
 
       if (skip) {
-        dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: true });
+        const res = await deferPasswordChange();
+        if (res.error) {
+          return { ok: false, message: res.error };
+        }
+        const dismissedAt = new Date().toISOString();
+        dispatch({
+          type: "SET_ACCOUNT_SETUP",
+          userId: currentUser.id,
+          completed: false,
+          skipped: true,
+          promptDismissedAt: dismissedAt,
+        });
         return { ok: true };
       }
 
-      if (!password || password.length < 8) {
-        return { ok: false, message: "Password must be at least 8 characters." };
+      if (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+        return { ok: false, message: "Use at least 8 characters with uppercase, lowercase, and a number." };
       }
 
       const res = await updatePassword(password);
@@ -758,7 +904,12 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, message: res.error || "Failed to update password." };
       }
 
-      dispatch({ type: "COMPLETE_SETUP", userId: currentUser.id, skipped: false });
+      dispatch({
+        type: "SET_ACCOUNT_SETUP",
+        userId: currentUser.id,
+        completed: true,
+        skipped: false,
+      });
       return { ok: true };
     },
     [currentUser]
@@ -843,11 +994,6 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       const existing = state.rsvps.some(
         (item) => item.eventId === eventId && (item.userId === currentUser.id || item.userId === currentUser.authUserId)
       );
-      const count = state.rsvps.filter((item) => item.eventId === eventId).length;
-
-      if (!existing && count >= event.capacity) {
-        return { ok: false, message: "This session is already full." };
-      }
       if (!existing && ["Cancelled", "Completed"].includes(event.status)) {
         return { ok: false, message: "RSVP is closed for this session." };
       }
@@ -866,7 +1012,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
             });
             return {
               ok: true,
-              message: existing ? "RSVP cancelled (queued offline)." : "RSVP saved (queued offline).",
+              message: existing ? "Your cancellation will be submitted when you are back online." : "Your reservation will be submitted when you are back online.",
             };
           }
           // Rollback on server business rejection
@@ -889,14 +1035,31 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   );
 
   const toggleSchedule = useCallback(
-    (eventId: string): Result => {
+    async (eventId: string): Promise<Result> => {
       if (!currentUser || currentUser.role === "admin") {
         return { ok: false, message: "Sign in as a student to manage a schedule." };
       }
+      const userId = currentUser.authUserId || currentUser.id;
+      const saved = (state.scheduleEventIds[currentUser.id] || []).includes(eventId);
       dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.id, eventId });
-      return { ok: true };
+
+      try {
+        const result = await setSavedSession(eventId, !saved);
+        if (result.error) {
+          if (!navigator.onLine || result.error.includes("Failed to fetch")) {
+            await queueMutation(userId, "schedule", eventId, "set", { sessionId: eventId, saved: !saved });
+            return { ok: true, message: "Your schedule change will be saved when you are back online." };
+          }
+          dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.id, eventId });
+          return { ok: false, message: result.error };
+        }
+      } catch {
+        await queueMutation(userId, "schedule", eventId, "set", { sessionId: eventId, saved: !saved });
+        return { ok: true, message: "Your schedule change will be saved when you are back online." };
+      }
+      return { ok: true, message: saved ? "Removed from your schedule." : "Added to your schedule." };
     },
-    [currentUser]
+    [currentUser, state.scheduleEventIds]
   );
 
   const submitAttendance = useCallback(
@@ -927,7 +1090,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
             sessionId: eventId,
             code,
           });
-          return { ok: true, message: "Attendance queued for offline sync." };
+          return { ok: true, message: "Your attendance will be submitted when you are back online." };
         }
         return { ok: false, message: res.error };
       }
@@ -991,54 +1154,85 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const saveNote = useCallback(
     async (
       input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">,
-      submit = true
-    ): Promise<Result & { noteId?: string }> => {
+      submit = true,
+      file?: File | null
+    ): Promise<Result & { noteId?: string; note?: DemoNote }> => {
       if (!currentUser || currentUser.role === "admin") {
         return { ok: false, message: "Sign in as a student to save notes." };
       }
       if (!input.title.trim() || !input.subjectId) {
         return { ok: false, message: "Add a title and subject." };
       }
-      if (submit && !input.fileName) {
-        return { ok: false, message: "Select a local file before submitting." };
+      if (submit && !file && !input.fileId) {
+        return { ok: false, message: "Attach a file before submitting." };
       }
 
-      const existing = input.id ? state.notes.find((item) => item.id === input.id) : undefined;
-      const note: DemoNote = {
-        id: input.id ?? uid("note"),
-        title: input.title.trim(),
-        subjectId: input.subjectId,
-        description: input.description.trim(),
-        tags: input.tags ?? [],
-        uploaderId: currentUser.id,
-        createdAt: existing?.createdAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        status: submit ? "Pending" : "Draft",
-        fileName: input.fileName,
-        fileType: input.fileType,
-        fileId: input.fileId,
-        downloads: existing?.downloads ?? 0,
-      };
-
-      const res = await createNoteDraft({
+      const draftResult = await saveNoteDraft({
+        noteId: input.id,
         title: input.title.trim(),
         subjectId: input.subjectId,
         description: input.description.trim(),
         tags: input.tags || [],
       });
 
-      if (res.data && submit) {
-        await submitNoteToSupabase(res.data.id);
+      if (draftResult.error || !draftResult.data) {
+        return { ok: false, message: draftResult.error || "The draft could not be saved." };
       }
 
-      dispatch({ type: "UPSERT_NOTE", note: res.data || note });
+      let savedNote: DemoNote = {
+        ...draftResult.data,
+        fileName: input.fileName,
+        fileType: input.fileType,
+        fileId: input.fileId,
+      };
+      dispatch({ type: "UPSERT_NOTE", note: savedNote });
+
+      if (file) {
+        const uploadResult = await replaceNoteFile(savedNote.id, file);
+        if (uploadResult.error || !uploadResult.file) {
+          return {
+            ok: false,
+            noteId: savedNote.id,
+            note: savedNote,
+            message: `Draft saved, but the file could not be uploaded: ${uploadResult.error || "Unknown file error"}`,
+          };
+        }
+        savedNote = {
+          ...savedNote,
+          fileName: uploadResult.file.name,
+          fileType: uploadResult.file.type,
+          fileId: uploadResult.file.path,
+        };
+      }
+
+      if (submit) {
+        const submitResult = await submitNoteToSupabase(savedNote.id);
+        if (submitResult.error || !submitResult.data) {
+          dispatch({ type: "UPSERT_NOTE", note: savedNote });
+          return {
+            ok: false,
+            noteId: savedNote.id,
+            note: savedNote,
+            message: `Draft saved, but it could not be submitted: ${submitResult.error || "Unknown submission error"}`,
+          };
+        }
+        savedNote = {
+          ...submitResult.data,
+          fileName: savedNote.fileName,
+          fileType: savedNote.fileType,
+          fileId: savedNote.fileId,
+        };
+      }
+
+      dispatch({ type: "UPSERT_NOTE", note: savedNote });
       return {
         ok: true,
-        noteId: res.data?.id || note.id,
+        noteId: savedNote.id,
+        note: savedNote,
         message: submit ? "Note submitted for moderation." : "Draft saved.",
       };
     },
-    [currentUser, state.notes]
+    [currentUser]
   );
 
   const moderateNote = useCallback(
@@ -1080,36 +1274,44 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       const userFavs = state.favouriteNoteIds[currentUser.id] || [];
       const isFav = userFavs.includes(noteId);
 
+      const result = await toggleNoteFavorite(noteId, !isFav);
+      if (result.error) return { ok: false, message: result.error };
       dispatch({ type: "TOGGLE_FAVOURITE", userId: currentUser.id, noteId });
-      await toggleNoteFavorite(noteId, !isFav);
       return { ok: true };
     },
     [currentUser, state.favouriteNoteIds, state.notes]
   );
 
   const saveSubject = useCallback(
-    (input: Partial<Subject> & Pick<Subject, "code" | "name" | "yearLevel">): Result => {
+    async (input: Partial<Subject> & Pick<Subject, "code" | "name" | "yearLevel">): Promise<Result> => {
       if (!input.code.trim() || !input.name.trim()) {
         return { ok: false, message: "Subject code and name are required." };
       }
+      const subjectToSave: Subject = {
+        id: input.id ?? uid("sub"),
+        code: input.code.trim().toUpperCase(),
+        name: input.name.trim(),
+        yearLevel: input.yearLevel,
+        coordinator: input.coordinator?.trim() || "TBD",
+        active: input.active ?? true,
+      };
+
       dispatch({
         type: "UPSERT_SUBJECT",
-        subject: {
-          id: input.id ?? uid("sub"),
-          code: input.code.trim().toUpperCase(),
-          name: input.name.trim(),
-          yearLevel: input.yearLevel,
-          coordinator: input.coordinator?.trim() || "TBD",
-          active: input.active ?? true,
-        },
+        subject: subjectToSave,
       });
+
+      const res = await upsertSubjectInSupabase(subjectToSave);
+      if (res.error && navigator.onLine && !res.error.includes("Failed to fetch")) {
+        return { ok: false, message: res.error };
+      }
       return { ok: true };
     },
     []
   );
 
   const deleteSubject = useCallback(
-    (id: string): Result => {
+    async (id: string): Promise<Result> => {
       if (
         state.events.some((event) => event.subjectId === id) ||
         state.notes.some((note) => note.subjectId === id)
@@ -1117,9 +1319,33 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, message: "This subject is in use and cannot be deleted." };
       }
       dispatch({ type: "DELETE_SUBJECT", subjectId: id });
+
+      const res = await deleteSubjectRecordInSupabase(id);
+      if (res.error && navigator.onLine && !res.error.includes("Failed to fetch")) {
+        return { ok: false, message: res.error };
+      }
       return { ok: true };
     },
     [state.events, state.notes]
+  );
+
+  const saveUser = useCallback(
+    async (user: DemoUser): Promise<Result> => {
+      dispatch({ type: "UPDATE_USER", user });
+      const res = await adminUpdateProfileInSupabase(user.id, {
+        name: user.name,
+        section: user.section,
+        program: user.program,
+        yearLevel: user.yearLevel,
+        active: user.active,
+        role: user.role,
+      });
+      if (res.error && navigator.onLine && !res.error.includes("Failed to fetch")) {
+        return { ok: false, message: res.error };
+      }
+      return { ok: true };
+    },
+    []
   );
 
   const adjustPoints = useCallback(
@@ -1154,33 +1380,38 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   );
 
   const markNotification = useCallback(async (id: string, read = true): Promise<Result> => {
+    const result = await markNotificationAsRead(id, read);
+    if (result.error) return { ok: false, message: result.error.message || "Notification was not updated." };
     dispatch({ type: "MARK_NOTIFICATION", id, read });
-    await markNotificationAsRead(id, read);
     return { ok: true };
   }, []);
 
   const markAllNotifications = useCallback(async (): Promise<Result> => {
     if (!currentUser) return { ok: false, message: "Not logged in" };
+    const result = await markAllNotificationsAsRead(currentUser.authUserId || currentUser.id);
+    if (result.error) return { ok: false, message: result.error.message || "Notifications were not updated." };
     dispatch({ type: "MARK_ALL_NOTIFICATIONS", userId: currentUser.id });
-    await markAllNotificationsAsRead(currentUser.authUserId || currentUser.id);
     return { ok: true };
   }, [currentUser]);
 
   const markAnnouncementRead = useCallback(
     async (announcementId: string): Promise<Result> => {
       if (!currentUser) return { ok: false, message: "Not logged in" };
+      const result = await markAnnouncementAsReadInSupabase(announcementId);
+      if (result.error) return { ok: false, message: result.error.message || "Announcement was not updated." };
       dispatch({ type: "MARK_ANNOUNCEMENT", announcementId, userId: currentUser.id });
-      await markAnnouncementAsReadInSupabase(announcementId);
       return { ok: true };
     },
     [currentUser]
   );
 
   const updatePreferences = useCallback(
-    (preferences: Preferences): Result => {
+    async (preferences: Preferences): Promise<Result> => {
       if (!currentUser) return { ok: false, message: "Not logged in" };
+      const result = await saveMyPreferences(preferences);
+      if (result.error) return { ok: false, message: result.error };
       dispatch({ type: "UPDATE_PREFERENCES", userId: currentUser.id, preferences });
-      return { ok: true };
+      return { ok: true, message: "Preferences saved." };
     },
     [currentUser]
   );
@@ -1218,10 +1449,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       },
       saveSubject,
       deleteSubject,
-      saveUser: (user: DemoUser) => {
-        dispatch({ type: "UPDATE_USER", user });
-        return { ok: true };
-      },
+      saveUser,
       adjustPoints,
       markAnnouncementRead,
       updatePreferences,
@@ -1249,6 +1477,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       markAllNotifications,
       saveSubject,
       deleteSubject,
+      saveUser,
       adjustPoints,
       markAnnouncementRead,
       updatePreferences,

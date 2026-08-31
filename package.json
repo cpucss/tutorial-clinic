@@ -8,7 +8,9 @@
     "dev": "vite",
     "test:mobile": "node scripts/mobile-audit.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:advisors": "npx supabase db advisors --linked --type all",
+    "db:lint": "npx supabase db lint --linked"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

@@ -62,5 +62,16 @@ export default defineConfig({
       "@": path.resolve(projectDirectory, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+          supabase: ["@supabase/supabase-js"],
+          lucide: ["lucide-react"],
+        },
+      },
+    },
+  },
   assetsInclude: ["**/*.svg", "**/*.csv"],
 });

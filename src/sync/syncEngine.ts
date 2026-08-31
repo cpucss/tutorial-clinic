@@ -10,7 +10,7 @@ import {
 } from "../offline/outboxRepository";
 import type { OutboxMutation } from "../offline/database";
 import { checkInWithCode } from "../services/supabase/attendanceRepository";
-import { setRsvp } from "../services/supabase/sessionRepository";
+import { setRsvp, setSavedSession } from "../services/supabase/sessionRepository";
 
 let isSyncing = false;
 
@@ -114,6 +114,14 @@ async function defaultApplyMutation(mutation: OutboxMutation): Promise<unknown> 
       if (p.sessionId !== undefined) {
         const joined = p.joined !== undefined ? Boolean(p.joined) : true;
         const res = await setRsvp(p.sessionId, joined);
+        if (res.error) throw new Error(res.error);
+        return res;
+      }
+      return null;
+
+    case "schedule":
+      if (p.sessionId !== undefined) {
+        const res = await setSavedSession(p.sessionId, Boolean(p.saved));
         if (res.error) throw new Error(res.error);
         return res;
       }

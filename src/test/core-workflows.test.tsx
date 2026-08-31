@@ -1,19 +1,20 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HashRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../app/App";
 import { AppDataProvider, appDataReducer } from "../context/AppDataContext";
 import { createSeedState, DEMO_STORAGE_KEY } from "../data/seed";
 import { attendanceService } from "../services";
 import { isValidOpaqueQrToken } from "../features/attendance/qr";
+import * as authAdapter from "../services/supabase/authAdapter";
 
 function renderApp() {
   return render(<HashRouter><AppDataProvider><App /></AppDataProvider></HashRouter>);
 }
 
 describe("core front-end demo workflows", () => {
-  afterEach(() => cleanup());
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
   beforeEach(() => {
     window.localStorage.clear();
     window.location.hash = "#/login";
@@ -23,21 +24,92 @@ describe("core front-end demo workflows", () => {
     renderApp();
     fireEvent.change(screen.getByLabelText("Student ID"), { target: { value: "invalid" } });
     fireEvent.click(screen.getByRole("button", { name: "Login" }));
-    expect(await screen.findByText("Invalid Student ID format. Use YYYY-00000.", { selector: ".inline-notice-body" })).toBeInTheDocument();
+    expect(await screen.findByText("Invalid Student ID format. Use YY-XXXX-ZZ.", { selector: ".inline-notice-body" })).toBeInTheDocument();
   });
 
   it("requires first-login account setup and persists completion", async () => {
+    vi.spyOn(authAdapter, "signInStudent").mockResolvedValue({
+      account: {
+        user: { id: "11111111-1111-4111-8111-111111111111", email: "2024-00421@cpucss.edu.ph" },
+        profile: {
+          id: "11111111-1111-4111-8111-111111111111",
+          studentId: "2024-00421",
+          name: "Aria Cruz",
+          role: "student",
+          yearLevel: "Freshman",
+          program: "BS Computer Science",
+          section: "A",
+          active: true,
+          mustChangePassword: true,
+          accountSetupCompleted: false,
+        },
+      },
+      error: null,
+    });
+    vi.spyOn(authAdapter, "updatePassword").mockResolvedValue({ error: null });
     renderApp();
     fireEvent.change(screen.getByLabelText("Student ID"), { target: { value: "2024-00421" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "202400421" } });
     fireEvent.click(screen.getByRole("button", { name: "Login" }));
     expect(await screen.findByRole("heading", { name: /Welcome, Aria/i })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Backup email address"), { target: { value: "aria.backup@example.com" } });
     fireEvent.change(screen.getByLabelText("Create password"), { target: { value: "SecurePass1" } });
     fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "SecurePass1" } });
     fireEvent.click(screen.getByRole("button", { name: /Save and Continue/i }));
     await waitFor(() => expect(screen.queryByRole("heading", { name: /Welcome, Aria/i })).not.toBeInTheDocument());
     const stored = JSON.parse(window.localStorage.getItem(DEMO_STORAGE_KEY) ?? "{}");
     expect(stored.users.find((user: { id: string }) => user.id === "stu-042").accountSetup.completed).toBe(true);
+  });
+
+  it("defers the password prompt once and moves the action to Notifications", async () => {
+    vi.spyOn(authAdapter, "deferPasswordChange").mockResolvedValue({ error: null });
+    const seed = createSeedState();
+    seed.currentUserId = "stu-042";
+    const student = seed.users.find((user) => user.id === "stu-042");
+    if (student) student.accountSetup = { completed: false, mustChangePassword: true };
+    window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(seed));
+    window.location.hash = "#/dashboard";
+
+    const firstView = renderApp();
+    expect(await screen.findByRole("heading", { name: /Welcome, Aria/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "I'll do it later" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: /Welcome, Aria/i })).not.toBeInTheDocument());
+    const stored = JSON.parse(window.localStorage.getItem(DEMO_STORAGE_KEY) ?? "{}");
+    expect(stored.users.find((user: { id: string }) => user.id === "stu-042").accountSetup.skipped).toBe(true);
+
+    firstView.unmount(); cleanup();
+    window.location.hash = "#/notifications";
+    renderApp();
+    expect(await screen.findByText("Change your temporary password")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Welcome, Aria/i })).not.toBeInTheDocument();
+  });
+
+  it("closes the password reminder after the password is changed", async () => {
+    vi.spyOn(authAdapter, "updatePassword").mockResolvedValue({ error: null });
+    const seed = createSeedState();
+    seed.currentUserId = "stu-042";
+    const student = seed.users.find((user) => user.id === "stu-042");
+    if (student) student.accountSetup = {
+      completed: false,
+      skipped: true,
+      mustChangePassword: true,
+      promptDismissedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(seed));
+    window.location.hash = "#/settings";
+
+    const settingsView = renderApp();
+    fireEvent.change(await screen.findByLabelText("New password"), { target: { value: "SecurePass1" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "SecurePass1" } });
+    fireEvent.click(screen.getByRole("button", { name: /Update Security/i }));
+    await waitFor(() => {
+      const stored = JSON.parse(window.localStorage.getItem(DEMO_STORAGE_KEY) ?? "{}");
+      expect(stored.users.find((user: { id: string }) => user.id === "stu-042").accountSetup.completed).toBe(true);
+    });
+
+    settingsView.unmount(); cleanup();
+    window.location.hash = "#/notifications";
+    renderApp();
+    await waitFor(() => expect(screen.queryByText("Change your temporary password")).not.toBeInTheDocument());
   });
 
   it("updates RSVP state through the centralized reducer", () => {

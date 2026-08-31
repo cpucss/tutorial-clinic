@@ -6,6 +6,8 @@ export type DemoAccountSetup = {
   completed: boolean;
   skipped?: boolean;
   completedAt?: string;
+  mustChangePassword?: boolean;
+  promptDismissedAt?: string;
 };
 export type DemoUser = {
   id: string;

@@ -5,10 +5,9 @@ import { Check, Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
 import { InlineNotice } from "../../../components/common/Feedback";
 import { useAppData } from "../../../context/AppDataContext";
 
-export function AccountSetupModal({ onComplete }: { onComplete: () => void }) {
+export function AccountSetupModal({ onComplete }: { onComplete: (deferred?: boolean) => void }) {
   const { currentUser, completeAccountSetup } = useAppData();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [backupEmail, setBackupEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -31,12 +30,16 @@ export function AccountSetupModal({ onComplete }: { onComplete: () => void }) {
     const result = await completeAccountSetup(password);
     setSaving(false);
     if (!result.ok) { setError(result.message); return; }
-    onComplete();
+    onComplete(false);
   }
 
   async function skipSetup() {
-    await completeAccountSetup("", true);
-    onComplete();
+    setError("");
+    setSaving(true);
+    const result = await completeAccountSetup("", true);
+    setSaving(false);
+    if (!result.ok) { setError(result.message); return; }
+    onComplete(true);
   }
 
   return (
@@ -48,17 +51,12 @@ export function AccountSetupModal({ onComplete }: { onComplete: () => void }) {
           <h1 id="setup-title">Welcome, {currentUser.name.split(" ")[0]}!</h1>
           <p id="setup-description">Before continuing, replace your temporary password with a secure password.</p>
         </div>
-        <InlineNotice tone="info" title="Supabase security">Your password is updated directly through Supabase Auth and is never stored in the app's local data.</InlineNotice>
+        <InlineNotice tone="info" title="Account security">Your new password is protected and is never stored in this application.</InlineNotice>
         {error && <InlineNotice tone="error" title="Check your account details">{error}</InlineNotice>}
         <form onSubmit={submit} className="setup-form" noValidate>
           <div className="form-group">
             <label htmlFor="setup-student-id">Student ID</label>
             <input id="setup-student-id" value={currentUser.studentId} readOnly />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="setup-backup-email">Backup email address</label>
-            <input id="setup-backup-email" type="email" placeholder="backup@example.com" value={backupEmail} onChange={(event) => setBackupEmail(event.target.value)} />
           </div>
 
           <div className="form-group">

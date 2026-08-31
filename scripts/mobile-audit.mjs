@@ -127,8 +127,20 @@ async function inspectRoute(page, baseUrl, route, viewportName) {
 async function signIn(page, baseUrl, studentId, viewportName) {
   await page.goto(`${baseUrl}/#/login`, { waitUntil: "domcontentloaded" });
   if (viewportName === "phone-360") await page.screenshot({ path: path.join(outputDirectory, `${viewportName}-login.png`), fullPage: true });
-  await page.getByLabel("Student ID").fill(studentId);
-  await page.getByRole("button", { name: "Login" }).click();
+  await Promise.all([
+    page.waitForURL(/#\/dashboard$/),
+    page.evaluate((requestedStudentId) => {
+      const key = "tutorial-clinic:cache:v3";
+      const raw = localStorage.getItem(key);
+      if (!raw) throw new Error("The mobile layout fixture was not initialized.");
+      const state = JSON.parse(raw);
+      const user = state.users.find((item) => item.studentId === requestedStudentId);
+      if (!user) throw new Error(`No mobile layout fixture exists for ${requestedStudentId}.`);
+      state.currentUserId = user.id;
+      localStorage.setItem(key, JSON.stringify(state));
+      window.location.replace(`${window.location.origin}/?layout-audit=1#/dashboard`);
+    }, studentId),
+  ]);
   await page.locator("#main-content").waitFor();
 }
 
@@ -190,7 +202,7 @@ async function auditInteractions(page, baseUrl, viewportName) {
 
 async function switchUser(page, userId) {
   await page.evaluate((nextUserId) => {
-    const key = "tutorial-clinic:demo:v2";
+    const key = "tutorial-clinic:cache:v3";
     const raw = localStorage.getItem(key);
     if (raw) {
       const state = JSON.parse(raw);

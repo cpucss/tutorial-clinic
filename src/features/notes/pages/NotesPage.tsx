@@ -16,7 +16,7 @@ export function NotesPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage, 
   const favouriteIds = new Set(state.favouriteNoteIds[currentUser?.id ?? ""] ?? []);
   const notes = useMemo(() => state.notes.filter((note) => note.status === "Approved").filter((note) => {
     const subject = state.subjects.find((item) => item.id === note.subjectId);
-    const uploader = state.users.find((item) => item.id === note.uploaderId);
+    const uploader = state.users.find((item) => item.id === note.uploaderId || item.authUserId === note.uploaderId);
     const haystack = `${note.title} ${note.description} ${note.tags.join(" ")} ${subject?.name} ${uploader?.name}`.toLowerCase();
     return (!query || haystack.includes(query.toLowerCase())) && (subjectId === "All" || note.subjectId === subjectId) && (year === "All" || subject?.yearLevel === year);
   }).sort((a, b) => sort === "Popular" ? b.downloads - a.downloads : +new Date(b.updatedAt) - +new Date(a.updatedAt)), [query, sort, state.notes, state.subjects, state.users, subjectId, year]);

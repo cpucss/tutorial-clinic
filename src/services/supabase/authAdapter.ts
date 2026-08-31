@@ -17,6 +17,7 @@ export type AuthProfile = {
   active: boolean;
   mustChangePassword?: boolean;
   accountSetupCompleted?: boolean;
+  passwordPromptDismissedAt?: string;
 };
 
 export type AuthAccount = {
@@ -84,7 +85,7 @@ export async function signInStudent(
   // Fetch the protected profile
   const { data: profileRow, error: profileError } = await supabase
     .from("profiles")
-    .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed")
+    .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed, password_prompt_dismissed_at")
     .eq("id", data.user.id)
     .single();
 
@@ -119,6 +120,7 @@ export async function signInStudent(
       active: profileRow.active,
       mustChangePassword: Boolean(profileRow.must_change_password),
       accountSetupCompleted: Boolean(profileRow.account_setup_completed),
+      passwordPromptDismissedAt: profileRow.password_prompt_dismissed_at || undefined,
     },
   };
 
@@ -132,7 +134,7 @@ export async function restoreAccount(): Promise<AuthAccount | null> {
 
   const { data: profileRow } = await supabase
     .from("profiles")
-    .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed")
+    .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed, password_prompt_dismissed_at")
     .eq("id", data.session.user.id)
     .single();
 
@@ -154,6 +156,7 @@ export async function restoreAccount(): Promise<AuthAccount | null> {
       active: true,
       mustChangePassword: Boolean(profileRow.must_change_password),
       accountSetupCompleted: Boolean(profileRow.account_setup_completed),
+      passwordPromptDismissedAt: profileRow.password_prompt_dismissed_at || undefined,
     },
   };
 }
@@ -181,32 +184,41 @@ export async function updatePassword(newPassword: string): Promise<{ error: stri
   }
 
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (!sessionData.session) {
-      // In local demo or offline test environment
-      return { error: null };
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !sessionData.session) {
+      return { error: "Your session has expired. Sign in again before changing your password." };
     }
 
-    const { data, error } = await supabase.auth.updateUser({ password: newPassword });
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
 
     if (error) {
       return { error: error.message || "Failed to update password." };
     }
 
-    if (data.user) {
-      await supabase
-        .from("profiles")
-        .update({
-          must_change_password: false,
-          account_setup_completed: true,
-        })
-        .eq("id", data.user.id);
+    const { error: profileError } = await supabase.rpc("complete_password_change");
+    if (profileError) {
+      return {
+        error: "Your password changed, but the account reminder could not be completed. Refresh and try again.",
+      };
     }
-  } catch {
-    return { error: null };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Failed to update password.",
+    };
   }
 
   return { error: null };
+}
+
+export async function deferPasswordChange(): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase.rpc("defer_password_change");
+    return { error: error?.message || null };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "Could not save your reminder preference.",
+    };
+  }
 }
 
 // Signs out the user

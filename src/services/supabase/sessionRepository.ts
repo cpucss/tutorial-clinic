@@ -69,6 +69,46 @@ export async function getSubjects(): Promise<{ data: Subject[] | null; error: st
   return { data: ((data as SubjectRow[]) || []).map(mapSubjectRow), error: null };
 }
 
+// Saves a new curriculum subject or updates an existing one in Supabase
+export async function upsertSubject(subject: Subject): Promise<{ data: Subject | null; error: string | null }> {
+  const payload: Database["public"]["Tables"]["subjects"]["Insert"] = {
+    id: subject.id,
+    code: subject.code.trim().toUpperCase(),
+    name: subject.name.trim(),
+    year_level: subject.yearLevel,
+    coordinator: subject.coordinator?.trim() || "TBD",
+    active: subject.active ?? true,
+  };
+
+  const { data, error } = await supabase
+    .from("subjects")
+    .upsert(payload)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Error saving subject:", error);
+    return { data: null, error: error.message };
+  }
+
+  return { data: mapSubjectRow(data as SubjectRow), error: null };
+}
+
+// Deletes a subject from Supabase
+export async function deleteSubjectRecord(id: string): Promise<{ success: boolean; error: string | null }> {
+  const { error } = await supabase
+    .from("subjects")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    console.error("Error deleting subject:", error);
+    return { success: false, error: error.message };
+  }
+
+  return { success: true, error: null };
+}
+
 // Retrieves all sessions from the database, ordered by start date
 export async function getSessions(): Promise<{ data: DemoEvent[] | null; error: string | null }> {
   const { data, error } = await supabase
@@ -152,11 +192,13 @@ export async function setSessionAttendanceCode(sessionId: string, code: string):
 }
 
 // Retrieves RSVPs for a specific user UUID
-export async function getUserRsvps(userId: string): Promise<{ data: Rsvp[] | null; error: string | null }> {
-  const { data, error } = await supabase
+export async function getUserRsvps(userId?: string): Promise<{ data: Rsvp[] | null; error: string | null }> {
+  let query = supabase
     .from("rsvps")
-    .select("*")
-    .eq("user_id", userId);
+    .select("*");
+
+  if (userId) query = query.eq("user_id", userId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching RSVPs:", error);
@@ -164,6 +206,30 @@ export async function getUserRsvps(userId: string): Promise<{ data: Rsvp[] | nul
   }
 
   return { data: ((data as RsvpRow[]) || []).map(mapRsvpRow), error: null };
+}
+
+export async function getSavedSessionIds(): Promise<{ data: string[] | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from("saved_sessions")
+    .select("session_id")
+    .order("created_at", { ascending: false });
+
+  if (error) return { data: null, error: error.message };
+  return { data: (data || []).map((row) => row.session_id), error: null };
+}
+
+export async function setSavedSession(
+  sessionId: string,
+  saved: boolean
+): Promise<{ error: string | null }> {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData.user) return { error: "Your session has expired. Sign in again." };
+
+  const query = saved
+    ? supabase.from("saved_sessions").upsert({ user_id: userData.user.id, session_id: sessionId })
+    : supabase.from("saved_sessions").delete().eq("user_id", userData.user.id).eq("session_id", sessionId);
+  const { error } = await query;
+  return { error: error?.message || null };
 }
 
 // Atomic RSVP join / cancel via database RPC

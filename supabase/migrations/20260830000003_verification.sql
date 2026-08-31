@@ -131,13 +131,30 @@ where n.nspname in ('public', 'private')
     'is_admin', 'is_active_user', 'set_rsvp', 'set_session_attendance_code',
     'check_in_with_code', 'issue_attendance_qr',
     'record_attendance_from_qr', 'moderate_attendance', 'moderate_note',
-    'adjust_points', 'update_my_profile', 'get_leaderboard'
+    'adjust_points', 'update_my_profile', 'get_leaderboard',
+    'defer_password_change', 'complete_password_change'
   )
   and (
     has_function_privilege('anon', p.oid, 'EXECUTE')
     or has_function_privilege('public', p.oid, 'EXECUTE')
   )
 order by n.nspname, p.proname;
+
+-- MUST BE EMPTY: account-reminder schema or RPCs missing after the reliability migration.
+select 'profiles.password_prompt_dismissed_at' as check_name, 'Column is missing' as reason
+where not exists (
+  select 1
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name = 'profiles'
+    and column_name = 'password_prompt_dismissed_at'
+)
+union all
+select 'public.defer_password_change()', 'Function is missing'
+where to_regprocedure('public.defer_password_change()') is null
+union all
+select 'public.complete_password_change()', 'Function is missing'
+where to_regprocedure('public.complete_password_change()') is null;
 
 -- MUST BE EMPTY: security-definer functions without an explicit search_path.
 select

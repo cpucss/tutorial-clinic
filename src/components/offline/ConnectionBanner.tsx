@@ -22,17 +22,17 @@ export function ConnectionBanner({ userId }: ConnectionBannerProps) {
   if (isOnline && pendingCount === 0) {
     return null;
   } else if (isOnline && pendingCount > 0) {
-    message = `Syncing ${pendingCount} change${pendingCount > 1 ? "s" : ""}...`;
+    message = `Saving ${pendingCount} pending change${pendingCount > 1 ? "s" : ""}...`;
     bgColor = "#EEF2FF";
     textColor = "#3730A3";
     Icon = RefreshCw;
   } else if (!isOnline && pendingCount > 0) {
-    message = `Offline — ${pendingCount} change${pendingCount > 1 ? "s" : ""} saved on this device`;
+    message = `Offline - ${pendingCount} change${pendingCount > 1 ? "s are" : " is"} waiting for a connection`;
     bgColor = "#FEF3C7";
     textColor = "#92400E";
     Icon = WifiOff;
   } else {
-    message = "Offline — showing cached data";
+    message = "Offline - showing the latest available information";
     bgColor = "#FEF3C7";
     textColor = "#92400E";
     Icon = WifiOff;

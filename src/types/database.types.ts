@@ -21,6 +21,7 @@ export type Database = {
           active: boolean;
           account_setup_completed: boolean;
           must_change_password: boolean;
+          password_prompt_dismissed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -35,6 +36,7 @@ export type Database = {
           active?: boolean;
           account_setup_completed?: boolean;
           must_change_password?: boolean;
+          password_prompt_dismissed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -49,6 +51,7 @@ export type Database = {
           active?: boolean;
           account_setup_completed?: boolean;
           must_change_password?: boolean;
+          password_prompt_dismissed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -617,6 +620,14 @@ export type Database = {
           p_section: string;
           p_account_setup_completed?: boolean | null;
         };
+        Returns: Database["public"]["Tables"]["profiles"]["Row"];
+      };
+      defer_password_change: {
+        Args: Record<string, never>;
+        Returns: Database["public"]["Tables"]["profiles"]["Row"];
+      };
+      complete_password_change: {
+        Args: Record<string, never>;
         Returns: Database["public"]["Tables"]["profiles"]["Row"];
       };
     };

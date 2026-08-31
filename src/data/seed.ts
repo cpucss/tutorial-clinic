@@ -1,7 +1,7 @@
 import type { DemoEvent, DemoNote, DemoNotification, DemoState, Preferences } from "../types/app";
 
-export const DEMO_STATE_VERSION = 2;
-export const DEMO_STORAGE_KEY = "tutorial-clinic:demo:v2";
+export const DEMO_STATE_VERSION = 3;
+export const DEMO_STORAGE_KEY = "tutorial-clinic:cache:v3";
 
 export const defaultPreferences: Preferences = {
   reducedMotion: false,
@@ -249,5 +249,24 @@ export function createSeedState(): DemoState {
     notifications,
     announcements: [],
     preferences: Object.fromEntries(students.map((user) => [user.id, { ...defaultPreferences }])),
+  };
+}
+
+export function createEmptyState(): DemoState {
+  return {
+    version: DEMO_STATE_VERSION,
+    currentUserId: null,
+    users: [],
+    subjects: [],
+    events: [],
+    rsvps: [],
+    scheduleEventIds: {},
+    attendance: [],
+    notes: [],
+    favouriteNoteIds: {},
+    points: [],
+    notifications: [],
+    announcements: [],
+    preferences: {},
   };
 }
