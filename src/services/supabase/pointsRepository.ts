@@ -9,7 +9,7 @@ export type LeaderboardItem = {
   id: string; // User UUID
   studentId: string;
   name: string;
-  yearLevel: YearLevel;
+  yearLevel?: YearLevel | null;
   points: number;
   rank: number;
 };
@@ -56,7 +56,7 @@ export async function getLeaderboard(
     id: row.user_id,
     studentId: "",
     name: row.name || "Student",
-    yearLevel: (row.year_level as YearLevel) || "Freshman",
+    yearLevel: (row.year_level as YearLevel) || null,
     points: Number(row.total_points ?? 0),
     rank: Number(row.rank ?? index + 1),
   }));

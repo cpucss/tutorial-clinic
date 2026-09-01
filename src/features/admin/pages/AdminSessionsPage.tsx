@@ -576,7 +576,7 @@ function SessionEditor({
     onNotify?.({
       tone: "success",
       title: event ? "Session updated" : "Session created",
-      description: `${title} is now synchronized across admin and student pages.`,
+      description: `${title} ${event ? "updated" : "published"} successfully.`,
     });
     onClose();
   }

@@ -182,7 +182,7 @@ export default function App() {
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 4200);
   }
 
-  function handleNavigate(next: TabKey) {
+  function handleNavigate(next: TabKey, relatedId?: string) {
     if (ADMIN_TABS.includes(next) && currentUser?.role !== "admin") {
       notify({
         tone: "error",
@@ -191,7 +191,12 @@ export default function App() {
       });
       return;
     }
-    navigate(TAB_PATHS[next]);
+    const path = TAB_PATHS[next];
+    if (next === "events" && relatedId) {
+      navigate(`${path}?sessionId=${encodeURIComponent(relatedId)}`);
+    } else {
+      navigate(path);
+    }
   }
 
   function handleLogout() {

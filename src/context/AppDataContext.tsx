@@ -547,6 +547,9 @@ export type AppDataContextValue = {
   leaderboardUpdatedAt: string | null;
   loadLeaderboard: (yearLevel?: "All" | YearLevel) => Promise<void>;
   refreshLeaderboard: (yearLevel?: "All" | YearLevel) => Promise<void>;
+  sharedRecordsLoading: boolean;
+  sharedRecordsError: string | null;
+  sharedRecordsUpdatedAt: string | null;
   refreshSharedRecords: () => Promise<void>;
   refreshUserRecords: () => Promise<void>;
   refreshAllAuthorizedRecords: () => Promise<void>;
@@ -603,7 +606,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
             name: account.profile.name || "Student",
             email: account.user.email || `${studentId.toLowerCase()}@cpu.edu.ph`,
             role: account.profile.role || "student",
-            yearLevel: account.profile.yearLevel || "Freshman",
+            yearLevel: account.profile.yearLevel || null,
             program: account.profile.program || "BS Computer Science",
             section: account.profile.section || "A",
             active: account.profile.active,
@@ -776,7 +779,16 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     [loadLeaderboard]
   );
 
+  const [sharedRecordsLoading, setSharedRecordsLoading] = useState(false);
+  const [sharedRecordsError, setSharedRecordsError] = useState<string | null>(null);
+  const [sharedRecordsUpdatedAt, setSharedRecordsUpdatedAt] = useState<string | null>(null);
+  const sharedRecordsReqIdRef = useRef<number>(0);
+
   const loadSharedRecords = useCallback(async () => {
+    const currentReqId = ++sharedRecordsReqIdRef.current;
+    setSharedRecordsLoading(true);
+    setSharedRecordsError(null);
+
     try {
       const [subjectsResult, sessionsResult, approvedResult, announcementsResult] = await Promise.all([
         getSubjects(),
@@ -785,6 +797,17 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         getAnnouncements(),
       ]);
       const pendingResult = currentUser?.role === "admin" ? await getPendingNotes() : null;
+
+      // Discard stale out-of-order responses
+      if (currentReqId !== sharedRecordsReqIdRef.current) return;
+
+      if (sessionsResult.error) {
+        setSharedRecordsError(sessionsResult.error);
+      } else if (subjectsResult.error) {
+        setSharedRecordsError(subjectsResult.error);
+      } else {
+        setSharedRecordsUpdatedAt(new Date().toISOString());
+      }
 
       if (subjectsResult.data) dispatch({ type: "SET_SUBJECTS", subjects: subjectsResult.data });
       if (sessionsResult.data) dispatch({ type: "SET_EVENTS", events: sessionsResult.data });
@@ -795,8 +818,14 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         dispatch({ type: "RECONCILE_NOTES", notes: pendingResult.data, statuses: ["Pending"] });
       }
       if (announcementsResult.data) dispatch({ type: "SET_ANNOUNCEMENTS", announcements: announcementsResult.data });
-    } catch (error) {
-      console.warn("Could not refresh shared records.", error);
+    } catch (error: any) {
+      if (currentReqId === sharedRecordsReqIdRef.current) {
+        setSharedRecordsError(error?.message || "Could not refresh shared records.");
+      }
+    } finally {
+      if (currentReqId === sharedRecordsReqIdRef.current) {
+        setSharedRecordsLoading(false);
+      }
     }
   }, [currentUser?.role]);
 
@@ -1626,6 +1655,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       leaderboardUpdatedAt,
       loadLeaderboard,
       refreshLeaderboard,
+      sharedRecordsLoading,
+      sharedRecordsError,
+      sharedRecordsUpdatedAt,
       refreshSharedRecords,
       refreshUserRecords,
       refreshAllAuthorizedRecords,
@@ -1665,6 +1697,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       leaderboardUpdatedAt,
       loadLeaderboard,
       refreshLeaderboard,
+      sharedRecordsLoading,
+      sharedRecordsError,
+      sharedRecordsUpdatedAt,
       refreshSharedRecords,
       refreshUserRecords,
       refreshAllAuthorizedRecords,
