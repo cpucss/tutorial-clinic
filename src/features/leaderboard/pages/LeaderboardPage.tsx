@@ -8,21 +8,21 @@ import { relativeTime } from "../../../utils/format";
 export function LeaderboardPage() {
   const {
     currentUser,
+    leaderboardYearLevel,
     leaderboardItems,
     leaderboardLoading,
     leaderboardError,
     loadLeaderboard,
+    refreshLeaderboard,
     leaderboardUpdatedAt,
   } = useAppData();
 
-  const [year, setYear] = useState<"All" | YearLevel>("All");
   const [query, setQuery] = useState("");
-
   const accountUserId = currentUser?.authUserId ?? currentUser?.id;
 
   useEffect(() => {
-    void loadLeaderboard(year === "All" ? undefined : year);
-  }, [loadLeaderboard, year]);
+    void loadLeaderboard(leaderboardYearLevel);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
     return leaderboardItems.filter((item) => {
@@ -50,7 +50,7 @@ export function LeaderboardPage() {
               <span>Updated {relativeTime(leaderboardUpdatedAt)}</span>
               <button
                 className="secondary-button !py-1 !px-2 text-xs"
-                onClick={() => void loadLeaderboard(year === "All" ? undefined : year)}
+                onClick={() => void refreshLeaderboard()}
                 disabled={leaderboardLoading}
                 aria-label="Refresh standings"
               >
@@ -75,8 +75,8 @@ export function LeaderboardPage() {
             {(["All", "Freshman", "Sophomore", "Junior", "Senior"] as const).map((item) => (
               <button
                 key={item}
-                className={`filter-chip ${year === item ? "is-active" : ""}`}
-                onClick={() => setYear(item)}
+                className={`filter-chip ${leaderboardYearLevel === item ? "is-active" : ""}`}
+                onClick={() => void loadLeaderboard(item)}
               >
                 {item}
               </button>
@@ -91,7 +91,7 @@ export function LeaderboardPage() {
             <p className="mt-1 text-sm text-red-700">{leaderboardError}</p>
             <button
               className="primary-button mt-4 mx-auto"
-              onClick={() => void loadLeaderboard(year === "All" ? undefined : year)}
+              onClick={() => void refreshLeaderboard()}
             >
               <RefreshCw size={14} /> Try again
             </button>
@@ -151,7 +151,7 @@ export function LeaderboardPage() {
             {me && (
               <div className="sticky-summary">
                 You are ranked <strong>#{me.rank}</strong> in{" "}
-                {year === "All" ? "the program" : year} with{" "}
+                {leaderboardYearLevel === "All" ? "the program" : leaderboardYearLevel} with{" "}
                 <strong>{me.points} points</strong>.
               </div>
             )}

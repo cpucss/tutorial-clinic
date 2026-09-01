@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { queueMutation } from "../offline/outboxRepository";
 import { clearUserOfflineCache } from "../offline/database";
 import { setupAutoSync } from "../sync/syncEngine";
@@ -539,12 +539,14 @@ export type AppDataContextValue = {
   adjustPoints: (userId: string, points: number, reason: string) => Promise<Result>;
   markAnnouncementRead: (announcementId: string) => Promise<Result>;
   updatePreferences: (preferences: Preferences) => Promise<Result>;
+  leaderboardYearLevel: "All" | YearLevel;
   leaderboardItems: LeaderboardItem[];
+  allLeaderboardItems: LeaderboardItem[];
   leaderboardLoading: boolean;
   leaderboardError: string | null;
   leaderboardUpdatedAt: string | null;
-  loadLeaderboard: (yearLevel?: YearLevel) => Promise<void>;
-  refreshLeaderboard: (yearLevel?: YearLevel) => Promise<void>;
+  loadLeaderboard: (yearLevel?: "All" | YearLevel) => Promise<void>;
+  refreshLeaderboard: (yearLevel?: "All" | YearLevel) => Promise<void>;
   refreshSharedRecords: () => Promise<void>;
   refreshUserRecords: () => Promise<void>;
   refreshAllAuthorizedRecords: () => Promise<void>;
@@ -705,33 +707,74 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return state.users.find((u) => u.id === state.currentUserId);
   }, [state.currentUserId, state.users]);
 
-  // Server-authoritative leaderboard state
+  // Server-authoritative leaderboard state with scope tracking and stale-response guard
+  const [leaderboardYearLevel, setLeaderboardYearLevel] = useState<"All" | YearLevel>("All");
   const [leaderboardItems, setLeaderboardItems] = useState<LeaderboardItem[]>([]);
+  const [allLeaderboardItems, setAllLeaderboardItems] = useState<LeaderboardItem[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState<boolean>(false);
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
   const [leaderboardUpdatedAt, setLeaderboardUpdatedAt] = useState<string | null>(null);
 
-  const loadLeaderboard = useCallback(async (yearLevel?: YearLevel) => {
+  const activeYearLevelRef = useRef<"All" | YearLevel>("All");
+  const leaderboardRequestIdRef = useRef<number>(0);
+
+  const loadLeaderboard = useCallback(async (yearLevel?: "All" | YearLevel) => {
+    const targetScope: "All" | YearLevel = yearLevel ?? "All";
+    activeYearLevelRef.current = targetScope;
+    setLeaderboardYearLevel(targetScope);
+
+    const currentReqId = ++leaderboardRequestIdRef.current;
     setLeaderboardLoading(true);
     setLeaderboardError(null);
+
     try {
-      const { data, error } = await getLeaderboard(yearLevel);
+      const { data, error } = await getLeaderboard(targetScope === "All" ? undefined : targetScope);
+
+      // Discard stale out-of-order responses
+      if (currentReqId !== leaderboardRequestIdRef.current) {
+        return;
+      }
+
       if (error) {
         setLeaderboardError(error);
       } else {
-        setLeaderboardItems(data || []);
-        setLeaderboardUpdatedAt(new Date().toISOString());
+        const items = data || [];
+        const updatedAt = new Date().toISOString();
+        setLeaderboardItems(items);
+        setLeaderboardUpdatedAt(updatedAt);
+        if (targetScope === "All") {
+          setAllLeaderboardItems(items);
+        }
       }
     } catch {
-      setLeaderboardError("Failed to fetch leaderboard.");
+      if (currentReqId === leaderboardRequestIdRef.current) {
+        setLeaderboardError("Failed to fetch leaderboard.");
+      }
     } finally {
-      setLeaderboardLoading(false);
+      if (currentReqId === leaderboardRequestIdRef.current) {
+        setLeaderboardLoading(false);
+      }
     }
   }, []);
 
-  const refreshLeaderboard = useCallback(async (yearLevel?: YearLevel) => {
-    await loadLeaderboard(yearLevel);
-  }, [loadLeaderboard]);
+  const refreshLeaderboard = useCallback(
+    async (yearLevel?: "All" | YearLevel) => {
+      const scopeToRefresh = yearLevel ?? activeYearLevelRef.current;
+      await loadLeaderboard(scopeToRefresh);
+      // If a specific year cohort is active, also ensure the all-program list is available in background
+      if (scopeToRefresh !== "All") {
+        try {
+          const { data } = await getLeaderboard(undefined);
+          if (data) {
+            setAllLeaderboardItems(data);
+          }
+        } catch {
+          // Non-critical background all-program cache refresh
+        }
+      }
+    },
+    [loadLeaderboard]
+  );
 
   const loadSharedRecords = useCallback(async () => {
     try {
@@ -803,13 +846,13 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   }, [loadUserRecords]);
 
   const refreshAllAuthorizedRecords = useCallback(async () => {
-    await Promise.all([loadUserRecords(), loadSharedRecords(), loadLeaderboard()]);
-  }, [loadLeaderboard, loadSharedRecords, loadUserRecords]);
+    await Promise.all([loadUserRecords(), loadSharedRecords(), refreshLeaderboard()]);
+  }, [loadSharedRecords, loadUserRecords, refreshLeaderboard]);
 
   useEffect(() => {
     if (currentUser) {
       void loadSharedRecords();
-      void loadLeaderboard();
+      void loadLeaderboard(activeYearLevelRef.current);
     }
   }, [currentUser, loadLeaderboard, loadSharedRecords]);
 
@@ -857,7 +900,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     if (!currentUser) return;
     const refreshAll = () => {
       if (navigator.onLine && document.visibilityState === "visible") {
-        void Promise.all([loadUserRecords(), loadSharedRecords(), loadLeaderboard()]);
+        void Promise.all([loadUserRecords(), loadSharedRecords(), refreshLeaderboard()]);
       }
     };
     const intervalId = window.setInterval(refreshAll, 45000);
@@ -870,7 +913,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("focus", refreshAll);
       document.removeEventListener("visibilitychange", refreshAll);
     };
-  }, [currentUser, loadLeaderboard, loadSharedRecords, loadUserRecords]);
+  }, [currentUser, loadSharedRecords, loadUserRecords, refreshLeaderboard]);
 
   const currentPoints = useMemo(() => {
     if (!currentUser) return 0;
@@ -1544,7 +1587,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       adjustPoints,
       markAnnouncementRead,
       updatePreferences,
+      leaderboardYearLevel,
       leaderboardItems,
+      allLeaderboardItems,
       leaderboardLoading,
       leaderboardError,
       leaderboardUpdatedAt,
@@ -1581,7 +1626,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       adjustPoints,
       markAnnouncementRead,
       updatePreferences,
+      leaderboardYearLevel,
       leaderboardItems,
+      allLeaderboardItems,
       leaderboardLoading,
       leaderboardError,
       leaderboardUpdatedAt,

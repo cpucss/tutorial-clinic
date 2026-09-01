@@ -12,7 +12,7 @@ export function DashboardPage({
   onNavigate?: (tab: TabKey) => void;
   onOpenQr?: () => void;
 }) {
-  const { state, currentUser, currentPoints, unreadCount, leaderboardItems, loadLeaderboard } = useAppData();
+  const { state, currentUser, currentPoints, unreadCount, allLeaderboardItems, leaderboardItems } = useAppData();
   if (!currentUser) return null;
   const isStudent = currentUser.role !== "admin";
   const accountUserId = currentUser.authUserId ?? currentUser.id;
@@ -30,7 +30,8 @@ export function DashboardPage({
   const approvedNotes = myNotes.filter((note) => note.status === "Approved").length;
   const pendingNotes = myNotes.filter((note) => note.status === "Pending").length;
 
-  const userRankItem = leaderboardItems.find(
+  const rankList = allLeaderboardItems.length > 0 ? allLeaderboardItems : leaderboardItems;
+  const userRankItem = rankList.find(
     (item) => item.id === accountUserId || item.id === currentUser.id
   );
   const rank = userRankItem?.rank;

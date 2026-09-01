@@ -5,18 +5,14 @@ import { useAppData } from "../../../context/AppDataContext";
 import { relativeTime } from "../../../utils/format";
 
 export function AdminDashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => void }) {
-  const { state, leaderboardItems, loadLeaderboard } = useAppData();
-
-  useEffect(() => {
-    void loadLeaderboard();
-  }, [loadLeaderboard]);
+  const { state, allLeaderboardItems, leaderboardItems } = useAppData();
 
   const students = state.users.filter((user) => user.role !== "admin" && user.active);
   const pendingNotes = state.notes.filter((note) => note.status === "Pending");
   const pendingAttendance = state.attendance.filter((record) => record.status === "Pending");
   const approved = state.attendance.filter((record) => record.status === "Approved").length;
   const attendanceRate = state.attendance.length ? Math.round((approved / state.attendance.length) * 100) : 0;
-  const leaders = leaderboardItems.slice(0, 4);
+  const leaders = (allLeaderboardItems.length > 0 ? allLeaderboardItems : leaderboardItems).slice(0, 4);
   const activity = [...state.notifications]
     .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     .slice(0, 5);
