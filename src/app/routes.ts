@@ -3,7 +3,6 @@ import type { TabKey } from "../components/layout/Sidebar";
 export const TAB_PATHS: Record<TabKey, string> = {
   dashboard: "/dashboard",
   events: "/events",
-  subjects: "/subjects",
   "attendance-history": "/attendance",
   leaderboard: "/leaderboard",
   notes: "/notes",

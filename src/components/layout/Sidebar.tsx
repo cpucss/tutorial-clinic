@@ -33,7 +33,6 @@ import type { DemoUser } from "../../types/app";
 export type TabKey =
   | "dashboard"
   | "events"
-  | "subjects"
   | "attendance-history"
   | "leaderboard"
   | "notes"
@@ -90,11 +89,6 @@ const workspaceItems: NavItem[] = [
     key: "events",
     label: "Events",
     icon: <Calendar size={18} strokeWidth={1.75} />,
-  },
-  {
-    key: "subjects",
-    label: "BSCS Subjects",
-    icon: <NotebookTabs size={18} strokeWidth={1.75} />,
   },
   { key: "schedule", label: "My Schedule", icon: <CalendarDays size={18} strokeWidth={1.75} /> },
   {

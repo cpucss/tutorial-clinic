@@ -175,7 +175,7 @@ async function auditInteractions(page, baseUrl, viewportName) {
   await page.waitForTimeout(300);
   await assertPanelFits(page, ".mobile-more-sheet", "Mobile navigation sheet");
   const featureCount = await page.locator(".mobile-more-content .mobile-menu-group button").count();
-  if (featureCount !== 16) throw new Error(`Student navigation hub should expose 16 features, but found ${featureCount}.`);
+  if (featureCount !== 15) throw new Error(`Student navigation hub should expose 15 features, but found ${featureCount}.`);
   await page.screenshot({ path: path.join(outputDirectory, `${viewportName}-more-menu.png`) });
   await page.getByRole("button", { name: "Close mobile navigation" }).click();
 

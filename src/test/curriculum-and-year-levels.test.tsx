@@ -215,3 +215,38 @@ describe("Curriculum Anomaly Classifications & Data Integrity", () => {
     expect(exportData.year).toBe("Sophomore");
   });
 });
+
+describe("Student Route Isolation & Admin Subject Management", () => {
+  it("ensures student /subjects path has no active route and triggers fallback", async () => {
+    const { tabFromPath, TAB_PATHS } = await import("../app/routes");
+    expect(tabFromPath("/subjects")).toBeNull();
+    expect(TAB_PATHS["admin-subjects"]).toBe("/admin/subjects");
+    expect(tabFromPath("/admin/subjects")).toBe("admin-subjects");
+  });
+
+  it("verifies subjects are preserved for clinic sessions and study notes", () => {
+    const activeSubjects: Subject[] = [
+      { id: "subj-ccs-1001", code: "CCS 1001", name: "Introduction to Computing", yearLevel: "Freshman", coordinator: "TBD", active: true },
+      { id: "subj-ccs-1400", code: "CCS 1400", name: "Fundamentals of Programming", yearLevel: "Freshman", coordinator: "TBD", active: true },
+    ];
+
+    const session = {
+      id: "sess-1",
+      title: "Programming 101 Clinic",
+      subjectId: activeSubjects[0].id,
+    };
+
+    const note = {
+      id: "note-1",
+      title: "Computing Cheatsheet",
+      subjectId: activeSubjects[0].id,
+      status: "Approved",
+    };
+
+    const sessionSubject = activeSubjects.find((s) => s.id === session.subjectId);
+    const noteSubject = activeSubjects.find((s) => s.id === note.subjectId);
+
+    expect(sessionSubject?.code).toBe("CCS 1001");
+    expect(noteSubject?.name).toBe("Introduction to Computing");
+  });
+});

@@ -26,7 +26,6 @@ import { PointsPage } from "../features/points/pages/PointsPage";
 import { SchedulePage } from "../features/schedule/pages/SchedulePage";
 import { TAB_PATHS, tabFromPath } from "./routes";
 
-const SubjectsPage = lazy(() => import("../features/subjects/pages/SubjectsPage").then((module) => ({ default: module.SubjectsPage })));
 const NotesPage = lazy(() => import("../features/notes/pages/NotesPage").then((module) => ({ default: module.NotesPage })));
 const MyNotesPage = lazy(() => import("../features/notes/pages/MyNotesPage").then((module) => ({ default: module.MyNotesPage })));
 const AdminDashboardPage = lazy(() => import("../features/admin/pages/AdminDashboardPage").then((module) => ({ default: module.AdminDashboardPage })));
@@ -39,7 +38,6 @@ const AdminStudentsPage = lazy(() => import("../features/admin/pages/AdminStuden
 const TITLES: Record<TabKey, string> = {
   dashboard: "Workspace / Dashboard",
   events: "Workspace / Events",
-  subjects: "Workspace / BSCS Subjects",
   schedule: "Workspace / My Schedule",
   "attendance-history": "Workspace / Attendance",
   leaderboard: "Workspace / Leaderboard",
@@ -327,8 +325,6 @@ function Page({
       return <DashboardPage onNavigate={navigate} onOpenQr={onOpenQr} />;
     case "events":
       return <EventsPage onNotify={notify} />;
-    case "subjects":
-      return <SubjectsPage onNavigate={navigate} />;
     case "schedule":
       return <SchedulePage onNavigate={navigate} />;
     case "attendance-history":
