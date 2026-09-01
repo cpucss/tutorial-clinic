@@ -1,12 +1,129 @@
 import { supabase } from "./client";
-import type { DemoNote, DemoNoteStatus } from "../../types/app";
+import type {
+  DemoNote,
+  DemoNoteStatus,
+  NoteWorkflowError,
+  NoteWorkflowErrorCode,
+  NoteWorkflowStage,
+} from "../../types/app";
 import type { Database } from "../../types/database.types";
 
 type NoteRow = Database["public"]["Tables"]["notes"]["Row"];
 type NoteFileRow = Database["public"]["Tables"]["note_files"]["Row"];
 
-const NOTE_COLUMNS = "id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, created_at, updated_at";
-const NOTE_FILE_COLUMNS = "id, note_id, uploader_id, storage_path, file_name, mime_type, size_bytes, created_at";
+const NOTE_COLUMNS =
+  "id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, created_at, updated_at";
+const NOTE_FILE_COLUMNS =
+  "id, note_id, uploader_id, storage_path, file_name, mime_type, size_bytes, created_at";
+
+export const TUTORIAL_NOTES_BUCKET = "tutorial-notes";
+export const NOTE_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+export const ALLOWED_NOTE_MIME_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/msword",
+  "application/vnd.ms-powerpoint",
+];
+
+function isUuid(val?: string | null): boolean {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+}
+
+export function parseWorkflowError(stage: NoteWorkflowStage, rawError: any): NoteWorkflowError {
+  const msg =
+    typeof rawError === "string"
+      ? rawError
+      : rawError?.message || "An unexpected error occurred.";
+
+  if (msg.includes("DRAFT_NOT_FOUND") || msg.includes("PGRST116")) {
+    return {
+      code: "DRAFT_NOT_FOUND",
+      stage,
+      message: msg,
+      userFacingTitle: "Draft no longer available",
+      userFacingDescription: "The selected note draft could not be found on the server.",
+    };
+  }
+  if (msg.includes("DRAFT_NOT_EDITABLE")) {
+    return {
+      code: "DRAFT_NOT_EDITABLE",
+      stage,
+      message: msg,
+      userFacingTitle: "Note is not editable",
+      userFacingDescription:
+        "This note is currently being reviewed or has already been approved.",
+    };
+  }
+  if (msg.includes("NO_ATTACHMENT")) {
+    return {
+      code: "NO_ATTACHMENT",
+      stage,
+      message: msg,
+      userFacingTitle: "Attachment required",
+      userFacingDescription: "Please attach a study note file before submitting for review.",
+    };
+  }
+  if (msg.includes("UNAUTHORIZED")) {
+    return {
+      code: "UNAUTHORIZED",
+      stage,
+      message: msg,
+      userFacingTitle: "Unauthorized",
+      userFacingDescription: "You do not have permission to modify this note.",
+    };
+  }
+  if (msg.includes("VALIDATION_FAILED")) {
+    const cleanMsg = msg.replace(/^VALIDATION_FAILED:\s*/, "");
+    return {
+      code: "VALIDATION_FAILED",
+      stage,
+      message: cleanMsg,
+      userFacingTitle: "Validation failed",
+      userFacingDescription: cleanMsg,
+    };
+  }
+  if (stage === "uploading_file") {
+    return {
+      code: "STORAGE_UPLOAD_FAILED",
+      stage,
+      message: msg,
+      userFacingTitle: "Attachment upload failed",
+      userFacingDescription:
+        "The file could not be uploaded to storage. Please check your connection and try again.",
+    };
+  }
+  if (stage === "saving_metadata") {
+    return {
+      code: "FILE_METADATA_FAILED",
+      stage,
+      message: msg,
+      userFacingTitle: "Attachment could not be saved",
+      userFacingDescription: "The file was uploaded, but the file record could not be saved.",
+    };
+  }
+  if (stage === "submitting") {
+    return {
+      code: "NOTE_SUBMISSION_FAILED",
+      stage,
+      message: msg,
+      userFacingTitle: "Submission failed",
+      userFacingDescription:
+        "Draft was saved, but submitting for review failed. You can retry submission.",
+    };
+  }
+  return {
+    code: "DRAFT_SAVE_FAILED",
+    stage,
+    message: msg,
+    userFacingTitle: "Note not saved",
+    userFacingDescription: msg,
+  };
+}
 
 function mapNoteRow(row: NoteRow): DemoNote {
   return {
@@ -39,7 +156,9 @@ function withFile(note: DemoNote, file?: NoteFileRow): DemoNote {
   };
 }
 
-async function attachLatestFiles(rows: NoteRow[]): Promise<{ data: DemoNote[] | null; error: string | null }> {
+async function attachLatestFiles(
+  rows: NoteRow[]
+): Promise<{ data: DemoNote[] | null; error: string | null }> {
   const notes = rows.map(mapNoteRow);
   if (!rows.length) return { data: notes, error: null };
 
@@ -75,7 +194,9 @@ export async function getApprovedNotes(): Promise<{ data: DemoNote[] | null; err
 }
 
 // Retrieves notes uploaded by the current user
-export async function getMyNotes(userId: string): Promise<{ data: DemoNote[] | null; error: string | null }> {
+export async function getMyNotes(
+  userId: string
+): Promise<{ data: DemoNote[] | null; error: string | null }> {
   const { data, error } = await supabase
     .from("notes")
     .select(NOTE_COLUMNS)
@@ -98,42 +219,37 @@ export async function getPendingNotes(): Promise<{ data: DemoNote[] | null; erro
   return attachLatestFiles(data || []);
 }
 
-// Creates or updates one authoritative draft. Existing IDs are updated instead
-// of inserted, preventing an edited draft from becoming a duplicate row.
+// Creates or updates one authoritative draft via server-side RPC
 export async function saveNoteDraft(input: {
   noteId?: string;
   title: string;
   subjectId: string;
   description: string;
   tags: string[];
-}): Promise<{ data: DemoNote | null; error: string | null }> {
+}): Promise<{ data: DemoNote | null; error: NoteWorkflowError | null }> {
   const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) return { data: null, error: "Not authenticated" };
+  if (!userData.user) {
+    return {
+      data: null,
+      error: parseWorkflowError("saving_draft", "UNAUTHORIZED: Authentication required."),
+    };
+  }
 
-  const payload = {
-    title: input.title,
-    subject_id: input.subjectId,
-    description: input.description,
-    tags: input.tags,
-    uploader_id: userData.user.id,
-    status: "Draft" as const,
-    rejection_reason: null,
-    moderated_at: null,
-    moderated_by: null,
-  };
+  const validId = isUuid(input.noteId) ? input.noteId : null;
 
-  const query = input.noteId
-    ? supabase
-        .from("notes")
-        .update(payload)
-        .eq("id", input.noteId)
-        .eq("uploader_id", userData.user.id)
-    : supabase.from("notes").insert([payload]);
+  const { data, error } = await supabase.rpc("save_my_note_draft", {
+    p_note_id: validId,
+    p_title: input.title,
+    p_subject_id: input.subjectId,
+    p_description: input.description,
+    p_tags: input.tags,
+  });
 
-  const { data, error } = await query.select().single();
+  if (error) {
+    return { data: null, error: parseWorkflowError("saving_draft", error) };
+  }
 
-  if (error) return { data: null, error: error.message };
-  return { data: mapNoteRow(data), error: null };
+  return { data: mapNoteRow(data as NoteRow), error: null };
 }
 
 export async function createNoteDraft(input: {
@@ -141,48 +257,51 @@ export async function createNoteDraft(input: {
   subjectId: string;
   description: string;
   tags: string[];
-}): Promise<{ data: DemoNote | null; error: string | null }> {
+}): Promise<{ data: DemoNote | null; error: NoteWorkflowError | null }> {
   return saveNoteDraft(input);
 }
-
-export const TUTORIAL_NOTES_BUCKET = "tutorial-notes";
-export const NOTE_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
-export const ALLOWED_NOTE_MIME_TYPES = [
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  "application/msword",
-  "application/vnd.ms-powerpoint",
-];
 
 // Uploads a file to the private tutorial-notes storage bucket and records metadata
 export async function uploadNoteFile(
   noteId: string,
   file: File
-): Promise<{ filePath: string | null; error: string | null }> {
+): Promise<{ filePath: string | null; error: NoteWorkflowError | null }> {
   const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) return { filePath: null, error: "Not authenticated" };
+  if (!userData.user) {
+    return {
+      filePath: null,
+      error: parseWorkflowError("uploading_file", "UNAUTHORIZED: Authentication required."),
+    };
+  }
 
   if (file.size > NOTE_MAX_FILE_SIZE_BYTES) {
-    return { filePath: null, error: "File exceeds 25 MB size limit." };
+    return {
+      filePath: null,
+      error: {
+        code: "FILE_VALIDATION_FAILED",
+        stage: "validating",
+        message: "File exceeds 25 MB size limit.",
+        userFacingTitle: "File too large",
+        userFacingDescription: "Study files must be 25 MB or smaller.",
+      },
+    };
   }
 
   const fileUuid = crypto.randomUUID();
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${userData.user.id}/${noteId}/${fileUuid}-${sanitizedName}`;
 
-  // Upload to private bucket with upsert allowed by policy
+  // Upload to private bucket with immutable objects (upsert: false)
   const { error: uploadError } = await supabase.storage
     .from(TUTORIAL_NOTES_BUCKET)
     .upload(storagePath, file, {
       cacheControl: "3600",
-      upsert: true,
+      upsert: false,
     });
 
-  if (uploadError) return { filePath: null, error: uploadError.message };
+  if (uploadError) {
+    return { filePath: null, error: parseWorkflowError("uploading_file", uploadError) };
+  }
 
   // Insert metadata record in note_files table
   const { error: metaError } = await supabase.from("note_files").insert([
@@ -197,9 +316,9 @@ export async function uploadNoteFile(
   ]);
 
   if (metaError) {
-    // Cleanup uploaded storage object if database record fails
+    // Cleanup newly uploaded storage object if database record fails
     await supabase.storage.from(TUTORIAL_NOTES_BUCKET).remove([storagePath]);
-    return { filePath: null, error: metaError.message };
+    return { filePath: null, error: parseWorkflowError("saving_metadata", metaError) };
   }
 
   return { filePath: storagePath, error: null };
@@ -208,18 +327,20 @@ export async function uploadNoteFile(
 export async function replaceNoteFile(
   noteId: string,
   file: File
-): Promise<{ file: { path: string; name: string; type: string } | null; error: string | null; warning?: string }> {
-  const { data: existingFiles, error: existingError } = await supabase
+): Promise<{
+  file: { path: string; name: string; type: string } | null;
+  error: NoteWorkflowError | null;
+  warning?: string;
+}> {
+  const { data: existingFiles } = await supabase
     .from("note_files")
     .select(NOTE_FILE_COLUMNS)
     .eq("note_id", noteId)
     .order("created_at", { ascending: false });
 
-  if (existingError) return { file: null, error: existingError.message };
-
   const uploaded = await uploadNoteFile(noteId, file);
   if (uploaded.error || !uploaded.filePath) {
-    return { file: null, error: uploaded.error || "File upload failed." };
+    return { file: null, error: uploaded.error };
   }
 
   const oldFiles = (existingFiles || []).filter((item) => item.storage_path !== uploaded.filePath);
@@ -228,7 +349,7 @@ export async function replaceNoteFile(
     const oldPaths = oldFiles.map((item) => item.storage_path);
     const { error: storageError } = await supabase.storage.from(TUTORIAL_NOTES_BUCKET).remove(oldPaths);
     if (storageError) {
-      warning = "The new file was saved, but an older file could not be removed automatically.";
+      warning = "The new file was saved, but older files could not be removed automatically.";
     } else {
       const { error: metadataError } = await supabase
         .from("note_files")
@@ -247,17 +368,19 @@ export async function replaceNoteFile(
   };
 }
 
-// Submits a note for moderation
-export async function submitNote(noteId: string): Promise<{ data: DemoNote | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from("notes")
-    .update({ status: "Pending" })
-    .eq("id", noteId)
-    .select()
-    .single();
+// Submits a note for moderation via server-side RPC
+export async function submitNote(
+  noteId: string
+): Promise<{ data: DemoNote | null; error: NoteWorkflowError | null }> {
+  const { data, error } = await supabase.rpc("submit_my_note", {
+    p_note_id: noteId,
+  });
 
-  if (error) return { data: null, error: error.message };
-  return { data: mapNoteRow(data), error: null };
+  if (error) {
+    return { data: null, error: parseWorkflowError("submitting", error) };
+  }
+
+  return { data: mapNoteRow(data as NoteRow), error: null };
 }
 
 // Moderates a note via atomic RPC (awards 60 points on approval)
@@ -276,14 +399,14 @@ export async function moderateNote(
     return { data: null, error: error.message || "Failed to moderate note." };
   }
 
-  return { data: data ? mapNoteRow(data) : null, error: null };
+  return { data: data ? mapNoteRow(data as NoteRow) : null, error: null };
 }
 
 // Downloads a file from the private bucket
-export async function downloadNoteFile(storagePath: string): Promise<{ data: Blob | null; error: string | null }> {
-  const { data, error } = await supabase.storage
-    .from(TUTORIAL_NOTES_BUCKET)
-    .download(storagePath);
+export async function downloadNoteFile(
+  storagePath: string
+): Promise<{ data: Blob | null; error: string | null }> {
+  const { data, error } = await supabase.storage.from(TUTORIAL_NOTES_BUCKET).download(storagePath);
 
   if (error) return { data: null, error: error.message };
   return { data, error: null };

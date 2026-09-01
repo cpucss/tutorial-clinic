@@ -88,6 +88,35 @@ export type AttendanceRecord = {
 
 export type DemoNoteStatus = "Draft" | "Pending" | "Approved" | "Rejected";
 
+export type NoteWorkflowStage =
+  | "validating"
+  | "saving_draft"
+  | "uploading_file"
+  | "saving_metadata"
+  | "submitting"
+  | "complete";
+
+export type NoteWorkflowErrorCode =
+  | "DRAFT_NOT_FOUND"
+  | "DRAFT_NOT_EDITABLE"
+  | "DRAFT_SAVE_FAILED"
+  | "VALIDATION_FAILED"
+  | "FILE_VALIDATION_FAILED"
+  | "STORAGE_UPLOAD_FAILED"
+  | "FILE_METADATA_FAILED"
+  | "NO_ATTACHMENT"
+  | "NOTE_SUBMISSION_FAILED"
+  | "OFFLINE_QUEUED"
+  | "UNAUTHORIZED";
+
+export interface NoteWorkflowError {
+  code: NoteWorkflowErrorCode;
+  stage: NoteWorkflowStage;
+  message: string;
+  userFacingTitle: string;
+  userFacingDescription: string;
+}
+
 export type DemoNote = {
   id: string;
   title: string;

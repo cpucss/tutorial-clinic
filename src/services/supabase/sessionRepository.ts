@@ -100,11 +100,15 @@ export async function upsertSubject(subject: Subject): Promise<{ data: Subject |
     .from("subjects")
     .upsert(payload)
     .select("*")
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error("Error saving subject:", error);
     return { data: null, error: error.message };
+  }
+
+  if (!data) {
+    return { data: null, error: "Failed to save subject." };
   }
 
   return { data: mapSubjectRow(data as SubjectRow), error: null };
@@ -164,9 +168,10 @@ export async function saveSession(session: Partial<DemoEvent>): Promise<{ data: 
       .update(payload)
       .eq("id", session.id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return { data: null, error: error.message };
+    if (!data) return { data: null, error: "Session not found." };
     return { data: mapSessionRow(data as SessionRow), error: null };
   } else {
     // Insert new session (let PostgreSQL generate the UUID)
@@ -174,9 +179,10 @@ export async function saveSession(session: Partial<DemoEvent>): Promise<{ data: 
       .from("sessions")
       .insert([payload])
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return { data: null, error: error.message };
+    if (!data) return { data: null, error: "Failed to create session." };
 
     // If an attendance code was provided during creation, set it via RPC
     if (session.attendanceCode && data?.id) {

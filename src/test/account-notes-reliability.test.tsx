@@ -53,16 +53,22 @@ describe("account and note reliability regressions", () => {
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(saveSpy).toHaveBeenCalledTimes(1);
-    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({
-      noteId: existing.id,
-      title: "Updated once",
-    }));
+    expect(saveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        noteId: existing.id,
+        title: "Updated once",
+      })
+    );
   });
 
   it("uploads the selected file before submitting the same note", async () => {
     vi.spyOn(notesRepository, "saveNoteDraft").mockResolvedValue({ data: serverDraft, error: null });
     const uploadSpy = vi.spyOn(notesRepository, "replaceNoteFile").mockResolvedValue({
-      file: { path: "stu-042/note/file.docx", name: "review.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+      file: {
+        path: "stu-042/note/file.docx",
+        name: "review.docx",
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      },
       error: null,
     });
     const submitSpy = vi.spyOn(notesRepository, "submitNote").mockResolvedValue({
@@ -73,7 +79,9 @@ describe("account and note reliability regressions", () => {
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: serverDraft.title } });
     fireEvent.change(screen.getByLabelText("Description"), { target: { value: serverDraft.description } });
-    const file = new File(["study material"], "review.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    const file = new File(["study material"], "review.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
     fireEvent.change(screen.getByLabelText(/Study file/), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("button", { name: "Submit for review" }));
 
@@ -85,18 +93,33 @@ describe("account and note reliability regressions", () => {
   it("keeps the server draft ID after an upload error so retry cannot duplicate it", async () => {
     const saveSpy = vi.spyOn(notesRepository, "saveNoteDraft").mockResolvedValue({ data: serverDraft, error: null });
     vi.spyOn(notesRepository, "replaceNoteFile")
-      .mockResolvedValueOnce({ file: null, error: "Upload interrupted" })
       .mockResolvedValueOnce({
-        file: { path: "stu-042/note/retry.docx", name: "retry.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+        file: null,
+        error: {
+          code: "STORAGE_UPLOAD_FAILED",
+          stage: "uploading_file",
+          message: "Upload interrupted",
+          userFacingTitle: "Attachment upload failed",
+          userFacingDescription: "The file could not be uploaded to storage.",
+        },
+      })
+      .mockResolvedValueOnce({
+        file: {
+          path: "stu-042/note/retry.docx",
+          name: "retry.docx",
+          type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
         error: null,
       });
     const { onClose } = renderEditor();
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: serverDraft.title } });
-    const file = new File(["retry"], "retry.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    const file = new File(["retry"], "retry.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
     fireEvent.change(screen.getByLabelText(/Study file/), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText(/Draft saved, but the file could not be uploaded/)).toBeInTheDocument();
+    expect(await screen.findByText(/The file could not be uploaded to storage/)).toBeInTheDocument();
 
     // Verify Retry attachment button is available
     const retryBtn = screen.getByRole("button", { name: "Retry attachment" });
@@ -106,6 +129,39 @@ describe("account and note reliability regressions", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(saveSpy).toHaveBeenCalledTimes(2);
     expect(saveSpy.mock.calls[1][0].noteId).toBe(serverDraft.id);
+  });
+
+  it("handles DRAFT_NOT_FOUND by resetting the stale ID and allowing a fresh draft save", async () => {
+    const staleNote = { ...serverDraft, id: "99999999-9999-9999-9999-999999999999" };
+    const saveSpy = vi
+      .spyOn(notesRepository, "saveNoteDraft")
+      .mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: "DRAFT_NOT_FOUND",
+          stage: "saving_draft",
+          message: "DRAFT_NOT_FOUND: The requested note draft does not exist.",
+          userFacingTitle: "Draft no longer available",
+          userFacingDescription: "The selected note draft could not be found on the server.",
+        },
+      })
+      .mockResolvedValueOnce({
+        data: { ...serverDraft, id: "33333333-3333-4333-8333-333333333333" },
+        error: null,
+      });
+
+    const { onClose } = renderEditor(staleNote);
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+
+    expect(await screen.findByText(/The selected note draft could not be found on the server/)).toBeInTheDocument();
+
+    // Resaving now passes undefined/null noteId, recovering cleanly
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(saveSpy.mock.calls[0][0].noteId).toBe(staleNote.id);
+    expect(saveSpy.mock.calls[1][0].noteId).toBeUndefined();
   });
 
   it("verifies canonical storage bucket name and 25MB file size constant", () => {

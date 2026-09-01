@@ -87,7 +87,7 @@ export async function signInStudent(
     .from("profiles")
     .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed, password_prompt_dismissed_at")
     .eq("id", data.user.id)
-    .single();
+    .maybeSingle();
 
   if (profileError || !profileRow) {
     return {
@@ -136,7 +136,7 @@ export async function restoreAccount(): Promise<AuthAccount | null> {
     .from("profiles")
     .select("id, student_id, name, role, year_level, program, section, active, must_change_password, account_setup_completed, password_prompt_dismissed_at")
     .eq("id", data.session.user.id)
-    .single();
+    .maybeSingle();
 
   if (!profileRow || !profileRow.active) return null;
 

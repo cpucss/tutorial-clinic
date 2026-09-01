@@ -654,6 +654,22 @@ export type Database = {
         Args: Record<string, never>;
         Returns: Database["public"]["Tables"]["profiles"]["Row"];
       };
+      save_my_note_draft: {
+        Args: {
+          p_note_id?: string | null;
+          p_title: string;
+          p_subject_id: string;
+          p_description?: string;
+          p_tags?: string[];
+        };
+        Returns: Database["public"]["Tables"]["notes"]["Row"];
+      };
+      submit_my_note: {
+        Args: {
+          p_note_id: string;
+        };
+        Returns: Database["public"]["Tables"]["notes"]["Row"];
+      };
     };
     Enums: {
       [_ in never]: never;

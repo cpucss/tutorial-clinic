@@ -68,6 +68,7 @@ import type {
   DemoNotification,
   DemoState,
   DemoUser,
+  NoteWorkflowError,
   PointTransaction,
   Preferences,
   SessionStatus,
@@ -526,7 +527,11 @@ export type AppDataContextValue = {
   submitAttendance: (eventId: string, code: string, method?: "Code" | "QR") => Promise<Result>;
   recordStudentQrAttendance: (eventId: string, token: string) => Promise<Result & { studentName?: string; studentId?: string }>;
   moderateAttendance: (recordId: string, status: "Approved" | "Rejected", note?: string) => Promise<Result>;
-  saveNote: (input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">, submit?: boolean, file?: File | null) => Promise<Result & { noteId?: string; note?: DemoNote }>;
+  saveNote: (
+    input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">,
+    submit?: boolean,
+    file?: File | null
+  ) => Promise<Result & { noteId?: string; note?: DemoNote; errorDetail?: NoteWorkflowError }>;
   moderateNote: (noteId: string, status: "Approved" | "Rejected", reason?: string) => Promise<Result>;
   toggleFavourite: (noteId: string) => Promise<Result>;
   markNotification: (id: string, read?: boolean) => Promise<Result>;
@@ -1350,17 +1355,48 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       input: Partial<DemoNote> & Pick<DemoNote, "title" | "subjectId" | "description">,
       submit = true,
       file?: File | null
-    ): Promise<Result & { noteId?: string; note?: DemoNote }> => {
+    ): Promise<Result & { noteId?: string; note?: DemoNote; errorDetail?: NoteWorkflowError }> => {
       if (!currentUser || currentUser.role === "admin") {
-        return { ok: false, message: "Sign in as a student to save notes." };
+        return {
+          ok: false,
+          message: "Sign in as a student to save notes.",
+          errorDetail: {
+            code: "UNAUTHORIZED",
+            stage: "validating",
+            message: "Sign in as a student to save notes.",
+            userFacingTitle: "Unauthorized",
+            userFacingDescription: "Sign in as a student to save notes.",
+          },
+        };
       }
       if (!input.title.trim() || !input.subjectId) {
-        return { ok: false, message: "Add a title and subject." };
+        return {
+          ok: false,
+          message: "Add a title and subject.",
+          errorDetail: {
+            code: "VALIDATION_FAILED",
+            stage: "validating",
+            message: "Add a title and subject.",
+            userFacingTitle: "Missing required fields",
+            userFacingDescription: "Please provide both a title and subject for your note.",
+          },
+        };
       }
       if (submit && !file && !input.fileId) {
-        return { ok: false, message: "Attach a file before submitting." };
+        return {
+          ok: false,
+          message: "Attach a study file before submitting.",
+          errorDetail: {
+            code: "NO_ATTACHMENT",
+            stage: "validating",
+            message: "Attach a study file before submitting.",
+            userFacingTitle: "Attachment required",
+            userFacingDescription: "Please attach a study note file before submitting for review.",
+          },
+        };
       }
 
+      // Stage 1: Save or update draft
       const draftResult = await saveNoteDraft({
         noteId: input.id,
         title: input.title.trim(),
@@ -1370,7 +1406,18 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (draftResult.error || !draftResult.data) {
-        return { ok: false, message: draftResult.error || "The draft could not be saved." };
+        const errorDetail = draftResult.error || {
+          code: "DRAFT_SAVE_FAILED",
+          stage: "saving_draft",
+          message: "The draft could not be saved.",
+          userFacingTitle: "Draft could not be saved",
+          userFacingDescription: "The note draft could not be saved to the database.",
+        };
+        return {
+          ok: false,
+          message: errorDetail.userFacingDescription,
+          errorDetail,
+        };
       }
 
       let savedNote: DemoNote = {
@@ -1381,14 +1428,23 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       };
       dispatch({ type: "UPSERT_NOTE", note: savedNote });
 
+      // Stage 2: Upload or replace attachment file if provided
       if (file) {
         const uploadResult = await replaceNoteFile(savedNote.id, file);
         if (uploadResult.error || !uploadResult.file) {
+          const errorDetail = uploadResult.error || {
+            code: "STORAGE_UPLOAD_FAILED",
+            stage: "uploading_file",
+            message: "The file could not be uploaded.",
+            userFacingTitle: "Attachment upload failed",
+            userFacingDescription: "Draft was saved, but the attachment could not be uploaded.",
+          };
           return {
             ok: false,
             noteId: savedNote.id,
             note: savedNote,
-            message: `Draft saved, but the file could not be uploaded: ${uploadResult.error || "Unknown file error"}`,
+            message: errorDetail.userFacingDescription,
+            errorDetail,
           };
         }
         savedNote = {
@@ -1399,15 +1455,24 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
+      // Stage 3: Submit for review if requested
       if (submit) {
         const submitResult = await submitNoteToSupabase(savedNote.id);
         if (submitResult.error || !submitResult.data) {
           dispatch({ type: "UPSERT_NOTE", note: savedNote });
+          const errorDetail = submitResult.error || {
+            code: "NOTE_SUBMISSION_FAILED",
+            stage: "submitting",
+            message: "The note could not be submitted.",
+            userFacingTitle: "Submission failed",
+            userFacingDescription: "Draft was saved, but submission for review failed.",
+          };
           return {
             ok: false,
             noteId: savedNote.id,
             note: savedNote,
-            message: `Draft saved, but it could not be submitted: ${submitResult.error || "Unknown submission error"}`,
+            message: errorDetail.userFacingDescription,
+            errorDetail,
           };
         }
         savedNote = {

@@ -38,6 +38,9 @@ src/data/admin_list.json
 *.suo
 *.ntvs*
 *.njsproj
+
+# Temporary scratch and debug artifacts
+scratch/
 *.sln
 *.sw?
 node_modules/.vite

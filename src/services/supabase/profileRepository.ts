@@ -120,9 +120,10 @@ export async function updateMyProfile(
     })
     .eq("id", userData.user.id)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) return { data: null, error: error.message };
+  if (!data) return { data: null, error: "Profile not found." };
   return { data: mapProfileRow(data), error: null };
 }
 
@@ -143,8 +144,9 @@ export async function adminUpdateProfile(
     .update(updatePayload)
     .eq("id", userId)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) return { data: null, error: error.message };
+  if (!data) return { data: null, error: "Profile not found." };
   return { data: mapProfileRow(data), error: null };
 }
