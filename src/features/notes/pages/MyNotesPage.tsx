@@ -16,21 +16,236 @@ export function MyNotesPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage
   return <div className="h-full overflow-y-auto"><div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8"><header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div className="section-kicker">Personal contributions</div><h1 className="page-heading">My Notes</h1><p className="page-description">Prepare drafts, submit files for review, and respond to moderator feedback.</p></div><button className="primary-button" onClick={() => setEditor("new")}><FilePlus2 size={15} /> Upload note</button></header><div className="mt-6 flex flex-col gap-3 rounded-xl bg-white p-4 demo-card sm:flex-row"><label className="search-field flex-1"><Search size={15} /><span className="sr-only">Search my notes</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search my notes" /></label><div className="flex flex-wrap gap-2">{(["All", "Draft", "Pending", "Approved", "Rejected"] as const).map((item) => <button key={item} className={`filter-chip ${status === item ? "is-active" : ""}`} onClick={() => setStatus(item)}>{item}</button>)}</div></div>{mine.length ? <div className="mt-5 grid gap-3">{mine.map((note) => <article key={note.id} className="history-row items-start"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-bold">{note.title}</h2><StatusBadge status={note.status} /></div><p className="mt-1 text-sm text-[#6F6F6F]">{note.description}</p>{note.rejectionReason && <InlineNotice tone="error" title="Changes requested">{note.rejectionReason}</InlineNotice>}<div className="mt-2 text-xs text-[#8A8377]">{note.fileName ?? "No file attached"} - {note.tags.join(", ") || "No tags"}</div></div><div className="flex shrink-0 flex-wrap gap-2"><button className="secondary-button" onClick={() => setPreview(note)}><Eye size={14} /> Preview</button>{note.status !== "Pending" && note.status !== "Approved" && <button className="primary-button" onClick={() => setEditor(note)}><Edit3 size={14} /> {note.status === "Rejected" ? "Edit and resubmit" : "Edit draft"}</button>}</div></article>)}</div> : <div className="mt-5"><EmptyState icon={<Upload size={18} />} title="No notes in this view" body="Create a draft or change your filters." actionLabel="Upload a note" onAction={() => setEditor("new")} /></div>}</div>{editor && <NoteEditor note={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onNotify={onNotify} />}<NotePreviewModal note={preview} onClose={() => setPreview(null)} /></div>;
 }
 
-export function NoteEditor({ note, onClose, onNotify }: { note?: DemoNote; onClose: () => void; onNotify?: (toast: Omit<ToastMessage, "id">) => void }) {
+export function NoteEditor({
+  note,
+  onClose,
+  onNotify,
+}: {
+  note?: DemoNote;
+  onClose: () => void;
+  onNotify?: (toast: Omit<ToastMessage, "id">) => void;
+}) {
   const { state, saveNote } = useAppData();
-  const [persistedNote, setPersistedNote] = useState(note);
-  const [title, setTitle] = useState(note?.title ?? ""); const [subjectId, setSubjectId] = useState(note?.subjectId ?? state.subjects[0]?.id ?? ""); const [description, setDescription] = useState(note?.description ?? ""); const [tags, setTags] = useState(note?.tags.join(", ") ?? ""); const [file, setFile] = useState<File | null>(null); const [error, setError] = useState(""); const [previewUrl, setPreviewUrl] = useState<string | null>(null); const [saving, setSaving] = useState(false);
-  useEffect(() => { if (!file || (!file.type.startsWith("image/") && file.type !== "application/pdf")) { setPreviewUrl(null); return; } const url = URL.createObjectURL(file); setPreviewUrl(url); return () => URL.revokeObjectURL(url); }, [file]);
+  const [persistedNote, setPersistedNote] = useState<DemoNote | undefined>(note);
+  const [title, setTitle] = useState(note?.title ?? "");
+  const [subjectId, setSubjectId] = useState(note?.subjectId ?? state.subjects[0]?.id ?? "");
+  const [description, setDescription] = useState(note?.description ?? "");
+  const [tags, setTags] = useState(note?.tags.join(", ") ?? "");
+  const [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [statusState, setStatusState] = useState<"idle" | "saving" | "uploading" | "upload_failed">("idle");
+
+  useEffect(() => {
+    if (!file || (!file.type.startsWith("image/") && file.type !== "application/pdf")) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
   async function save(submit: boolean) {
-    if (saving) return;
+    if (statusState === "saving" || statusState === "uploading") return;
     setError("");
-    if (file && file.size > 10 * 1024 * 1024) { setError("Files must be 10 MB or smaller."); return; }
-    setSaving(true);
-    const result = await saveNote({ ...persistedNote, id: persistedNote?.id, title, subjectId, description, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), fileName: file?.name ?? persistedNote?.fileName, fileType: file?.type ?? persistedNote?.fileType, fileId: persistedNote?.fileId }, submit, file);
-    setSaving(false);
-    if (result.note) setPersistedNote(result.note);
-    if (!result.ok) { setError(result.message); return; }
-    onNotify?.({ tone: "success", title: submit ? "Note submitted" : "Draft saved", description: submit ? "Your note is ready for administrator review." : "Your changes have been saved." }); onClose();
+
+    if (file && file.size > 25 * 1024 * 1024) {
+      setError("Files must be 25 MB or smaller.");
+      return;
+    }
+
+    setStatusState(file ? "uploading" : "saving");
+    const result = await saveNote(
+      {
+        ...persistedNote,
+        id: persistedNote?.id,
+        title,
+        subjectId,
+        description,
+        tags: tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+        fileName: file?.name ?? persistedNote?.fileName,
+        fileType: file?.type ?? persistedNote?.fileType,
+        fileId: persistedNote?.fileId,
+      },
+      submit,
+      file
+    );
+
+    if (result.note) {
+      setPersistedNote(result.note);
+    }
+
+    if (!result.ok) {
+      setStatusState("upload_failed");
+      setError(result.message);
+      return;
+    }
+
+    setStatusState("idle");
+    onNotify?.({
+      tone: "success",
+      title: submit ? "Note submitted" : "Draft saved",
+      description: submit
+        ? "Your note is ready for administrator review."
+        : "Your changes have been saved.",
+    });
+    onClose();
   }
-  return <div className="confirm-overlay" onMouseDown={saving ? undefined : onClose}><div className="note-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="note-editor-title" onMouseDown={(event) => event.stopPropagation()}><header><div><div className="section-kicker">{persistedNote ? "Update contribution" : "New contribution"}</div><h2 id="note-editor-title">{persistedNote?.status === "Rejected" ? "Edit and resubmit note" : "Upload study note"}</h2></div><button className="icon-button rounded-full bg-[#FAF8F2]" onClick={onClose} aria-label="Close note editor" disabled={saving}><X size={16} /></button></header>{persistedNote?.rejectionReason && <InlineNotice tone="warning" title="Moderator feedback">{persistedNote.rejectionReason}</InlineNotice>}{error && <InlineNotice tone="error" title="Note not saved">{error}</InlineNotice>}<div className="note-editor-grid"><label className="form-field"><span>Title</span><input value={title} onChange={(event) => setTitle(event.target.value)} disabled={saving} /></label><label className="form-field"><span>Subject</span><select value={subjectId} onChange={(event) => setSubjectId(event.target.value)} disabled={saving}>{state.subjects.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name}</option>)}</select></label><label className="form-field md:col-span-2"><span>Description</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} disabled={saving} /></label><label className="form-field md:col-span-2"><span>Tags (comma separated)</span><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="recursion, exam-review" disabled={saving} /></label><label className="form-field md:col-span-2"><span>Study file</span><input type="file" accept=".pdf,.png,.jpg,.jpeg,.docx,.pptx" onChange={(event) => setFile(event.target.files?.[0] ?? null)} disabled={saving} /><small>{persistedNote?.fileName ? `Current: ${persistedNote.fileName}. Select another file to replace it.` : "PDF, image, DOCX, or PPTX up to 10 MB."}</small></label>{previewUrl && <div className="local-file-preview md:col-span-2">{file?.type === "application/pdf" ? <iframe src={previewUrl} title="Selected PDF preview" /> : <img src={previewUrl} alt="Selected file preview" />}</div>}</div><footer><button type="button" className="secondary-button" onClick={() => save(false)} disabled={saving}>{saving ? "Saving..." : "Save draft"}</button><button type="button" className="primary-button" onClick={() => save(true)} disabled={saving}><Upload size={15} /> {saving ? "Saving..." : "Submit for review"}</button></footer></div></div>;
+
+  const isBusy = statusState === "saving" || statusState === "uploading";
+
+  return (
+    <div className="confirm-overlay" onMouseDown={isBusy ? undefined : onClose}>
+      <div
+        className="note-editor-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="note-editor-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <div className="section-kicker">
+              {persistedNote ? "Update contribution" : "New contribution"}
+            </div>
+            <h2 id="note-editor-title">
+              {persistedNote?.status === "Rejected"
+                ? "Edit and resubmit note"
+                : persistedNote?.id
+                ? "Edit study note draft"
+                : "Upload study note"}
+            </h2>
+          </div>
+          <button
+            className="icon-button rounded-full bg-[#FAF8F2]"
+            onClick={onClose}
+            aria-label="Close note editor"
+            disabled={isBusy}
+          >
+            <X size={16} />
+          </button>
+        </header>
+
+        {persistedNote?.rejectionReason && (
+          <InlineNotice tone="warning" title="Moderator feedback">
+            {persistedNote.rejectionReason}
+          </InlineNotice>
+        )}
+
+        {error && (
+          <InlineNotice tone="error" title={statusState === "upload_failed" ? "Attachment upload failed" : "Note not saved"}>
+            {error}
+          </InlineNotice>
+        )}
+
+        <div className="note-editor-grid">
+          <label className="form-field">
+            <span>Title</span>
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              disabled={isBusy}
+            />
+          </label>
+
+          <label className="form-field">
+            <span>Subject</span>
+            <select
+              value={subjectId}
+              onChange={(event) => setSubjectId(event.target.value)}
+              disabled={isBusy}
+            >
+              {state.subjects
+                .filter((item) => item.active)
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.code} - {item.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label className="form-field md:col-span-2">
+            <span>Description</span>
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={3}
+              disabled={isBusy}
+            />
+          </label>
+
+          <label className="form-field md:col-span-2">
+            <span>Tags (comma separated)</span>
+            <input
+              value={tags}
+              onChange={(event) => setTags(event.target.value)}
+              placeholder="recursion, exam-review"
+              disabled={isBusy}
+            />
+          </label>
+
+          <label className="form-field md:col-span-2">
+            <span>Study file</span>
+            <input
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.docx,.pptx,.doc,.ppt"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              disabled={isBusy}
+            />
+            <small>
+              {persistedNote?.fileName
+                ? `Current: ${persistedNote.fileName}. Select another file to replace it.`
+                : "PDF, image, DOCX, or PPTX up to 25 MB."}
+            </small>
+          </label>
+
+          {previewUrl && (
+            <div className="local-file-preview md:col-span-2">
+              {file?.type === "application/pdf" ? (
+                <iframe src={previewUrl} title="Selected PDF preview" />
+              ) : (
+                <img src={previewUrl} alt="Selected file preview" />
+              )}
+            </div>
+          )}
+        </div>
+
+        <footer>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => save(false)}
+            disabled={isBusy}
+          >
+            {isBusy ? "Saving..." : "Save draft"}
+          </button>
+
+          {statusState === "upload_failed" && file && (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => save(persistedNote?.status === "Pending")}
+              disabled={isBusy}
+            >
+              <Upload size={15} /> Retry attachment
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => save(true)}
+            disabled={isBusy}
+          >
+            <Upload size={15} /> {isBusy ? "Uploading..." : "Submit for review"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
 }

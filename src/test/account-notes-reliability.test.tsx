@@ -98,9 +98,20 @@ describe("account and note reliability regressions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText(/Draft saved, but the file could not be uploaded/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    // Verify Retry attachment button is available
+    const retryBtn = screen.getByRole("button", { name: "Retry attachment" });
+    expect(retryBtn).toBeInTheDocument();
+
+    fireEvent.click(retryBtn);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(saveSpy).toHaveBeenCalledTimes(2);
     expect(saveSpy.mock.calls[1][0].noteId).toBe(serverDraft.id);
+  });
+
+  it("verifies canonical storage bucket name and 25MB file size constant", () => {
+    expect(notesRepository.TUTORIAL_NOTES_BUCKET).toBe("tutorial-notes");
+    expect(notesRepository.NOTE_MAX_FILE_SIZE_BYTES).toBe(25 * 1024 * 1024);
+    expect(notesRepository.ALLOWED_NOTE_MIME_TYPES).toContain("application/pdf");
+    expect(notesRepository.ALLOWED_NOTE_MIME_TYPES).toContain("image/png");
   });
 });

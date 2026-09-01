@@ -145,6 +145,19 @@ export async function createNoteDraft(input: {
   return saveNoteDraft(input);
 }
 
+export const TUTORIAL_NOTES_BUCKET = "tutorial-notes";
+export const NOTE_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+export const ALLOWED_NOTE_MIME_TYPES = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/msword",
+  "application/vnd.ms-powerpoint",
+];
+
 // Uploads a file to the private tutorial-notes storage bucket and records metadata
 export async function uploadNoteFile(
   noteId: string,
@@ -153,16 +166,20 @@ export async function uploadNoteFile(
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) return { filePath: null, error: "Not authenticated" };
 
+  if (file.size > NOTE_MAX_FILE_SIZE_BYTES) {
+    return { filePath: null, error: "File exceeds 25 MB size limit." };
+  }
+
   const fileUuid = crypto.randomUUID();
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${userData.user.id}/${noteId}/${fileUuid}-${sanitizedName}`;
 
-  // Upload to private bucket without upsert
+  // Upload to private bucket with upsert allowed by policy
   const { error: uploadError } = await supabase.storage
-    .from("tutorial-notes")
+    .from(TUTORIAL_NOTES_BUCKET)
     .upload(storagePath, file, {
       cacheControl: "3600",
-      upsert: false,
+      upsert: true,
     });
 
   if (uploadError) return { filePath: null, error: uploadError.message };
@@ -179,7 +196,11 @@ export async function uploadNoteFile(
     },
   ]);
 
-  if (metaError) return { filePath: null, error: metaError.message };
+  if (metaError) {
+    // Cleanup uploaded storage object if database record fails
+    await supabase.storage.from(TUTORIAL_NOTES_BUCKET).remove([storagePath]);
+    return { filePath: null, error: metaError.message };
+  }
 
   return { filePath: storagePath, error: null };
 }
@@ -205,7 +226,7 @@ export async function replaceNoteFile(
   let warning: string | undefined;
   if (oldFiles.length) {
     const oldPaths = oldFiles.map((item) => item.storage_path);
-    const { error: storageError } = await supabase.storage.from("tutorial-notes").remove(oldPaths);
+    const { error: storageError } = await supabase.storage.from(TUTORIAL_NOTES_BUCKET).remove(oldPaths);
     if (storageError) {
       warning = "The new file was saved, but an older file could not be removed automatically.";
     } else {
@@ -261,7 +282,7 @@ export async function moderateNote(
 // Downloads a file from the private bucket
 export async function downloadNoteFile(storagePath: string): Promise<{ data: Blob | null; error: string | null }> {
   const { data, error } = await supabase.storage
-    .from("tutorial-notes")
+    .from(TUTORIAL_NOTES_BUCKET)
     .download(storagePath);
 
   if (error) return { data: null, error: error.message };

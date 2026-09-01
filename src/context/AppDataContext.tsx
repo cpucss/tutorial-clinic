@@ -868,32 +868,63 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return setupAutoSync(userId);
   }, [currentUser]);
 
-  // Realtime subscription for sessions updates
+  // Comprehensive Realtime subscriptions for sessions, notes, notifications, attendance, and RSVPs
   useEffect(() => {
     if (!currentUser) return;
+    const userId = currentUser.authUserId || currentUser.id;
 
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const handleSessionChange = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+    let sharedDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let userDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleSharedChange = () => {
+      if (sharedDebounceTimer) clearTimeout(sharedDebounceTimer);
+      sharedDebounceTimer = setTimeout(() => {
         void loadSharedRecords();
-      }, 300);
+      }, 250);
+    };
+
+    const handleUserChange = () => {
+      if (userDebounceTimer) clearTimeout(userDebounceTimer);
+      userDebounceTimer = setTimeout(() => {
+        void loadUserRecords();
+      }, 250);
     };
 
     const channel = supabase
-      .channel("public:sessions-realtime")
+      .channel(`public:workspace-realtime-${userId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "sessions" },
-        handleSessionChange
+        handleSharedChange
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notes" },
+        handleSharedChange
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        handleUserChange
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        handleUserChange
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rsvps" },
+        handleUserChange
       )
       .subscribe();
 
     return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
+      if (sharedDebounceTimer) clearTimeout(sharedDebounceTimer);
+      if (userDebounceTimer) clearTimeout(userDebounceTimer);
       void supabase.removeChannel(channel);
     };
-  }, [currentUser, loadSharedRecords]);
+  }, [currentUser, loadSharedRecords, loadUserRecords]);
 
   // Centralized background synchronization coordinator
   useEffect(() => {

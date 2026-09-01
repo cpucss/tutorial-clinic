@@ -395,7 +395,7 @@ describe("Synchronization and Leaderboard Remediation", () => {
         </AppDataProvider>
       );
 
-      expect(channelSpy).toHaveBeenCalledWith("public:sessions-realtime");
+      expect(channelSpy).toHaveBeenCalledWith(expect.stringMatching(/public:(?:workspace|sessions)-realtime/));
 
       unmount();
 
