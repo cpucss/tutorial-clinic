@@ -4,6 +4,8 @@ import { useLocation, useNavigate } from "react-router";
 
 import { SkeletonBlock, ToastViewport } from "../components/common/Feedback";
 import type { ToastMessage } from "../components/common/Feedback";
+import { InactivityManager } from "../components/auth/InactivityManager";
+import { PwaUpdatePrompt } from "../components/common/PwaUpdatePrompt";
 import { Sidebar } from "../components/layout/Sidebar";
 import type { TabKey } from "../components/layout/Sidebar";
 import { TopBar } from "../components/layout/TopBar";
@@ -306,6 +308,8 @@ export default function App() {
             }
           />
         )}
+      <InactivityManager onNotify={notify} onNavigateToLogin={() => navigate("/login")} />
+      <PwaUpdatePrompt />
       <ToastViewport
         toasts={toasts}
         onDismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))}

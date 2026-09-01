@@ -266,6 +266,7 @@ export type Database = {
           rejection_reason: string | null;
           moderated_at: string | null;
           moderated_by: string | null;
+          deletion_requested_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -282,6 +283,7 @@ export type Database = {
           rejection_reason?: string | null;
           moderated_at?: string | null;
           moderated_by?: string | null;
+          deletion_requested_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -298,6 +300,7 @@ export type Database = {
           rejection_reason?: string | null;
           moderated_at?: string | null;
           moderated_by?: string | null;
+          deletion_requested_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -669,6 +672,12 @@ export type Database = {
           p_note_id: string;
         };
         Returns: Database["public"]["Tables"]["notes"]["Row"];
+      };
+      prepare_delete_my_note: {
+        Args: {
+          p_note_id: string;
+        };
+        Returns: string[];
       };
       get_deletable_note_paths: {
         Args: {

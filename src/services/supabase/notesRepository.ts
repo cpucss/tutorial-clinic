@@ -12,7 +12,7 @@ type NoteRow = Database["public"]["Tables"]["notes"]["Row"];
 type NoteFileRow = Database["public"]["Tables"]["note_files"]["Row"];
 
 const NOTE_COLUMNS =
-  "id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, created_at, updated_at";
+  "id, title, description, subject_id, tags, target_year_levels, uploader_id, status, downloads, rejection_reason, moderated_at, moderated_by, deletion_requested_at, created_at, updated_at";
 const NOTE_FILE_COLUMNS =
   "id, note_id, uploader_id, storage_path, file_name, mime_type, size_bytes, created_at";
 
@@ -471,8 +471,8 @@ export async function deleteNote(
     };
   }
 
-  // Phase 1: Retrieve deletable storage paths for this note
-  const { data: paths, error: pathsError } = await supabase.rpc("get_deletable_note_paths", {
+  // Phase 1: Retrieve deletable storage paths and mark note as deletion-pending
+  const { data: paths, error: pathsError } = await supabase.rpc("prepare_delete_my_note", {
     p_note_id: noteId,
   });
 
