@@ -170,4 +170,25 @@ describe("account and note reliability regressions", () => {
     expect(notesRepository.ALLOWED_NOTE_MIME_TYPES).toContain("application/pdf");
     expect(notesRepository.ALLOWED_NOTE_MIME_TYPES).toContain("image/png");
   });
+
+  it("deletes a draft note via confirmation in editor", async () => {
+    const existing = { ...serverDraft, id: "44444444-4444-4444-8444-444444444444" };
+    const deleteSpy = vi.spyOn(notesRepository, "deleteNote").mockResolvedValue({
+      ok: true,
+      error: null,
+    });
+    const { onClose } = renderEditor(existing);
+
+    const deleteBtn = screen.getByRole("button", { name: "Delete draft" });
+    expect(deleteBtn).toBeInTheDocument();
+    fireEvent.click(deleteBtn);
+
+    // Confirmation dialog appears
+    expect(await screen.findByRole("heading", { name: "Delete this draft?" })).toBeInTheDocument();
+    const confirmBtn = screen.getByRole("button", { name: "Delete note" });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(deleteSpy).toHaveBeenCalledWith(existing.id);
+  });
 });

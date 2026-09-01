@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, Edit3, Eye, FilePlus2, RefreshCw, Search, Upload, X } from "lucide-react";
-import { EmptyState, InlineNotice, StatusBadge } from "../../../components/common/Feedback";
+import { AlertCircle, Edit3, Eye, FilePlus2, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
+import { ConfirmDialog, EmptyState, InlineNotice, StatusBadge } from "../../../components/common/Feedback";
 import type { ToastMessage } from "../../../components/common/Feedback";
 import { useAppData } from "../../../context/AppDataContext";
 import type { DemoNote, DemoNoteStatus, NoteWorkflowError } from "../../../types/app";
 import { NotePreviewModal } from "../components/NotePreviewModal";
 
 export function MyNotesPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage, "id">) => void }) {
-  const { state, currentUser } = useAppData();
+  const { state, currentUser, deleteNote } = useAppData();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"All" | DemoNoteStatus>("All");
   const [editor, setEditor] = useState<DemoNote | "new" | null>(null);
   const [preview, setPreview] = useState<DemoNote | null>(null);
+  const [deletingNote, setDeletingNote] = useState<DemoNote | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const mine = state.notes
     .filter(
@@ -88,9 +90,19 @@ export function MyNotesPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage
                     <Eye size={14} /> Preview
                   </button>
                   {note.status !== "Pending" && note.status !== "Approved" && (
-                    <button className="primary-button" onClick={() => setEditor(note)}>
-                      <Edit3 size={14} /> {note.status === "Rejected" ? "Edit and resubmit" : "Edit draft"}
-                    </button>
+                    <>
+                      <button className="primary-button" onClick={() => setEditor(note)}>
+                        <Edit3 size={14} /> {note.status === "Rejected" ? "Edit and resubmit" : "Edit draft"}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+                        onClick={() => setDeletingNote(note)}
+                        title="Delete note"
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
+                    </>
                   )}
                 </div>
               </article>
@@ -117,6 +129,36 @@ export function MyNotesPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage
         />
       )}
       <NotePreviewModal note={preview} onClose={() => setPreview(null)} />
+
+      <ConfirmDialog
+        open={Boolean(deletingNote)}
+        title="Delete this draft?"
+        body="Delete this draft? The note and its attachment will be permanently removed. This action cannot be undone."
+        confirmLabel={isDeleting ? "Deleting..." : "Delete note"}
+        cancelLabel="Keep note"
+        tone="error"
+        onCancel={() => !isDeleting && setDeletingNote(null)}
+        onConfirm={async () => {
+          if (!deletingNote || isDeleting) return;
+          setIsDeleting(true);
+          const result = await deleteNote(deletingNote.id);
+          setIsDeleting(false);
+          if (result.ok) {
+            onNotify?.({
+              tone: "warning",
+              title: "Note deleted",
+              description: "The note and its attachment were removed.",
+            });
+            setDeletingNote(null);
+          } else {
+            onNotify?.({
+              tone: "error",
+              title: "Could not delete note",
+              description: result.message,
+            });
+          }
+        }}
+      />
     </div>
   );
 }
@@ -130,7 +172,7 @@ export function NoteEditor({
   onClose: () => void;
   onNotify?: (toast: Omit<ToastMessage, "id">) => void;
 }) {
-  const { state, saveNote } = useAppData();
+  const { state, saveNote, deleteNote } = useAppData();
   const [persistedNote, setPersistedNote] = useState<DemoNote | undefined>(note);
   const [title, setTitle] = useState(note?.title ?? "");
   const [subjectId, setSubjectId] = useState(note?.subjectId ?? state.subjects[0]?.id ?? "");
@@ -139,6 +181,8 @@ export function NoteEditor({
   const [file, setFile] = useState<File | null>(null);
   const [workflowError, setWorkflowError] = useState<NoteWorkflowError | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeletingDraft, setIsDeletingDraft] = useState(false);
   const [statusState, setStatusState] = useState<
     "idle" | "saving_draft" | "uploading_file" | "submitting" | "error"
   >("idle");
@@ -371,11 +415,22 @@ export function NoteEditor({
         </div>
 
         <footer>
+          {persistedNote?.id && persistedNote.status !== "Pending" && persistedNote.status !== "Approved" && (
+            <button
+              type="button"
+              className="secondary-button text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700 mr-auto"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={isBusy || isDeletingDraft}
+            >
+              <Trash2 size={15} /> Delete draft
+            </button>
+          )}
+
           <button
             type="button"
             className="secondary-button"
             onClick={() => save(false)}
-            disabled={isBusy}
+            disabled={isBusy || isDeletingDraft}
           >
             {statusState === "saving_draft" ? "Saving draft..." : "Save draft"}
           </button>
@@ -385,7 +440,7 @@ export function NoteEditor({
               type="button"
               className="primary-button"
               onClick={() => save(persistedNote?.status === "Pending")}
-              disabled={isBusy}
+              disabled={isBusy || isDeletingDraft}
             >
               <RefreshCw size={15} /> Retry attachment
             </button>
@@ -396,7 +451,7 @@ export function NoteEditor({
               type="button"
               className="primary-button"
               onClick={() => save(true)}
-              disabled={isBusy}
+              disabled={isBusy || isDeletingDraft}
             >
               <RefreshCw size={15} /> Retry submission
             </button>
@@ -406,7 +461,7 @@ export function NoteEditor({
             type="button"
             className="primary-button"
             onClick={() => save(true)}
-            disabled={isBusy}
+            disabled={isBusy || isDeletingDraft}
           >
             <Upload size={15} />{" "}
             {statusState === "uploading_file"
@@ -417,6 +472,40 @@ export function NoteEditor({
           </button>
         </footer>
       </div>
+
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        title="Delete this draft?"
+        body="Delete this draft? The note and its attachment will be permanently removed. This action cannot be undone."
+        confirmLabel={isDeletingDraft ? "Deleting..." : "Delete note"}
+        cancelLabel="Keep note"
+        tone="error"
+        onCancel={() => !isDeletingDraft && setShowDeleteConfirm(false)}
+        onConfirm={async () => {
+          if (!persistedNote?.id || isDeletingDraft) return;
+          setIsDeletingDraft(true);
+          const result = await deleteNote(persistedNote.id);
+          setIsDeletingDraft(false);
+          if (result.ok) {
+            onNotify?.({
+              tone: "warning",
+              title: "Note deleted",
+              description: "The draft was permanently removed.",
+            });
+            setShowDeleteConfirm(false);
+            onClose();
+          } else {
+            setWorkflowError({
+              code: "DRAFT_SAVE_FAILED",
+              stage: "saving_draft",
+              message: result.message,
+              userFacingTitle: "Could not delete note",
+              userFacingDescription: result.message,
+            });
+            setShowDeleteConfirm(false);
+          }
+        }}
+      />
     </div>
   );
 }

@@ -670,6 +670,16 @@ export type Database = {
         };
         Returns: Database["public"]["Tables"]["notes"]["Row"];
       };
+      delete_my_note: {
+        Args: {
+          p_note_id: string;
+        };
+        Returns: {
+          success: boolean;
+          note_id: string;
+          storage_paths: string[];
+        };
+      };
     };
     Enums: {
       [_ in never]: never;

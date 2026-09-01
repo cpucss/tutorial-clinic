@@ -94,7 +94,7 @@ export function parseWorkflowError(stage: NoteWorkflowStage, rawError: any): Not
       message: msg,
       userFacingTitle: "Attachment upload failed",
       userFacingDescription:
-        "The file could not be uploaded to storage. Please check your connection and try again.",
+        "We couldn’t upload your attachment. Your draft is safe. Please try again.",
     };
   }
   if (stage === "saving_metadata") {
@@ -103,7 +103,8 @@ export function parseWorkflowError(stage: NoteWorkflowStage, rawError: any): Not
       stage,
       message: msg,
       userFacingTitle: "Attachment could not be saved",
-      userFacingDescription: "The file was uploaded, but the file record could not be saved.",
+      userFacingDescription:
+        "The file was uploaded, but the file record could not be saved. Please try again.",
     };
   }
   if (stage === "submitting") {
@@ -443,4 +444,52 @@ export async function toggleNoteFavorite(
       .eq("user_id", userData.user.id);
     return { error: error ? error.message : null };
   }
+}
+
+// Securely deletes an eligible note (Draft or Rejected) and cleans up its private storage objects
+export async function deleteNote(
+  noteId: string
+): Promise<{ ok: boolean; error: NoteWorkflowError | null }> {
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) {
+    return {
+      ok: false,
+      error: parseWorkflowError("saving_draft", "UNAUTHORIZED: Authentication required."),
+    };
+  }
+
+  if (!isUuid(noteId)) {
+    return {
+      ok: false,
+      error: {
+        code: "DRAFT_NOT_FOUND",
+        stage: "saving_draft",
+        message: "Invalid note identifier.",
+        userFacingTitle: "Draft not found",
+        userFacingDescription: "The note draft could not be found.",
+      },
+    };
+  }
+
+  const { data, error } = await supabase.rpc("delete_my_note", {
+    p_note_id: noteId,
+  });
+
+  if (error) {
+    return {
+      ok: false,
+      error: parseWorkflowError("saving_draft", error),
+    };
+  }
+
+  const res = data as { success?: boolean; storage_paths?: string[] };
+  if (res?.storage_paths && res.storage_paths.length > 0) {
+    try {
+      await supabase.storage.from(TUTORIAL_NOTES_BUCKET).remove(res.storage_paths);
+    } catch (e) {
+      console.warn("Could not delete some note storage objects:", e);
+    }
+  }
+
+  return { ok: true, error: null };
 }

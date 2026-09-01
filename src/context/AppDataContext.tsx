@@ -28,6 +28,7 @@ import {
   replaceNoteFile,
   submitNote as submitNoteToSupabase,
   moderateNote as moderateNoteInSupabase,
+  deleteNote as deleteNoteFromSupabase,
   toggleNoteFavorite,
   getFavoriteNoteIds,
 } from "../services/supabase/notesRepository";
@@ -94,6 +95,7 @@ export type AppDataAction =
   | { type: "SET_ATTENDANCE"; attendance: AttendanceRecord[] }
   | { type: "MODERATE_ATTENDANCE"; recordId: string; status: "Approved" | "Rejected"; reviewerId: string; correctionNote?: string }
   | { type: "UPSERT_NOTE"; note: DemoNote }
+  | { type: "DELETE_NOTE"; noteId: string }
   | { type: "SET_NOTES"; notes: DemoNote[] }
   | { type: "MERGE_NOTES"; notes: DemoNote[] }
   | { type: "RECONCILE_NOTES"; notes: DemoNote[]; statuses: DemoNote["status"][] }
@@ -308,6 +310,11 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
           : [action.note, ...state.notes];
       return { ...state, notes };
     }
+    case "DELETE_NOTE":
+      return {
+        ...state,
+        notes: state.notes.filter((n) => n.id !== action.noteId),
+      };
     case "SET_NOTES":
       return { ...state, notes: action.notes };
     case "MERGE_NOTES":
@@ -532,6 +539,7 @@ export type AppDataContextValue = {
     submit?: boolean,
     file?: File | null
   ) => Promise<Result & { noteId?: string; note?: DemoNote; errorDetail?: NoteWorkflowError }>;
+  deleteNote: (noteId: string) => Promise<Result>;
   moderateNote: (noteId: string, status: "Approved" | "Rejected", reason?: string) => Promise<Result>;
   toggleFavourite: (noteId: string) => Promise<Result>;
   markNotification: (id: string, read?: boolean) => Promise<Result>;
@@ -1494,6 +1502,24 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     [currentUser]
   );
 
+  const deleteNote = useCallback(
+    async (noteId: string): Promise<Result> => {
+      if (!currentUser) {
+        return { ok: false, message: "Sign in to delete notes." };
+      }
+      const res = await deleteNoteFromSupabase(noteId);
+      if (!res.ok) {
+        return {
+          ok: false,
+          message: res.error?.userFacingDescription || "Could not delete note.",
+        };
+      }
+      dispatch({ type: "DELETE_NOTE", noteId });
+      return { ok: true, message: "Note deleted successfully." };
+    },
+    [currentUser]
+  );
+
   const moderateNote = useCallback(
     async (noteId: string, status: "Approved" | "Rejected", reason?: string): Promise<Result> => {
       if (!currentUser || currentUser.role !== "admin") {
@@ -1726,6 +1752,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       refreshSharedRecords,
       refreshUserRecords,
       refreshAllAuthorizedRecords,
+      deleteNote,
     }),
     [
       state,
@@ -1744,6 +1771,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       recordStudentQrAttendance,
       moderateAttendance,
       saveNote,
+      deleteNote,
       moderateNote,
       toggleFavourite,
       markNotification,
