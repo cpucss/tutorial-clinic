@@ -116,7 +116,7 @@ describe("core front-end demo workflows", () => {
     const seed = createSeedState();
     const next = appDataReducer(seed, { type: "TOGGLE_RSVP", userId: "stu-208", eventId: "evt-1" });
     expect(next.rsvps.some((item) => item.userId === "stu-208" && item.eventId === "evt-1")).toBe(true);
-    expect(next.scheduleEventIds["stu-208"]).toContain("evt-1");
+    expect(next.scheduleEventIds["stu-208"] ?? []).not.toContain("evt-1");
   });
 
   it("awards points when a pending note is approved", () => {

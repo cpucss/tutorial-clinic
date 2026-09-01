@@ -12,21 +12,47 @@ export function DashboardPage({
   onNavigate?: (tab: TabKey) => void;
   onOpenQr?: () => void;
 }) {
-  const { state, currentUser, currentPoints, unreadCount } = useAppData();
+  const { state, currentUser, currentPoints, unreadCount, leaderboardItems, loadLeaderboard } = useAppData();
   if (!currentUser) return null;
   const isStudent = currentUser.role !== "admin";
-  const approvedAttendance = state.attendance.filter((record) => record.userId === currentUser.id && record.status === "Approved");
-  const attendanceTotal = state.attendance.filter((record) => record.userId === currentUser.id && record.status !== "Rejected").length;
+  const accountUserId = currentUser.authUserId ?? currentUser.id;
+
+  const approvedAttendance = state.attendance.filter(
+    (record) => (record.userId === currentUser.id || record.userId === accountUserId) && record.status === "Approved"
+  );
+  const attendanceTotal = state.attendance.filter(
+    (record) => (record.userId === currentUser.id || record.userId === accountUserId) && record.status !== "Rejected"
+  ).length;
   const attendanceRate = attendanceTotal ? Math.round((approvedAttendance.length / attendanceTotal) * 100) : 0;
-  const myNotes = state.notes.filter((note) => note.uploaderId === currentUser.id);
+  const myNotes = state.notes.filter(
+    (note) => note.uploaderId === currentUser.id || note.uploaderId === accountUserId
+  );
   const approvedNotes = myNotes.filter((note) => note.status === "Approved").length;
   const pendingNotes = myNotes.filter((note) => note.status === "Pending").length;
-  const ranking = state.users.filter((user) => user.role !== "admin").map((user) => ({ user, points: getUserPoints(state, user.id) })).sort((a, b) => b.points - a.points);
-  const rank = ranking.findIndex((item) => item.user.id === currentUser.id) + 1;
-  const scheduledIds = new Set([...(state.scheduleEventIds[currentUser.id] ?? []), ...state.rsvps.filter((item) => item.userId === currentUser.id).map((item) => item.eventId)]);
-  const upcoming = state.events.filter((event) => scheduledIds.has(event.id) && new Date(event.endDate) > new Date() && event.status !== "Cancelled").sort((a, b) => +new Date(a.date) - +new Date(b.date)).slice(0, 3);
-  const recentNotifications = state.notifications.filter((item) => item.userId === currentUser.id).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 4);
-  const announcement = state.announcements.filter((item) => item.audience === "All" || item.audience === currentUser.yearLevel).sort((a, b) => Number(b.pinned) - Number(a.pinned) || +new Date(b.publishedAt) - +new Date(a.publishedAt))[0];
+
+  const userRankItem = leaderboardItems.find(
+    (item) => item.id === accountUserId || item.id === currentUser.id
+  );
+  const rank = userRankItem?.rank;
+
+  const scheduledIds = new Set([
+    ...(state.scheduleEventIds[currentUser.id] ?? []),
+    ...(accountUserId ? state.scheduleEventIds[accountUserId] ?? [] : []),
+    ...state.rsvps
+      .filter((item) => item.userId === currentUser.id || item.userId === accountUserId)
+      .map((item) => item.eventId),
+  ]);
+  const upcoming = state.events
+    .filter((event) => scheduledIds.has(event.id) && new Date(event.endDate) > new Date() && event.status !== "Cancelled")
+    .sort((a, b) => +new Date(a.date) - +new Date(b.date))
+    .slice(0, 3);
+  const recentNotifications = state.notifications
+    .filter((item) => item.userId === currentUser.id || item.userId === accountUserId)
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    .slice(0, 4);
+  const announcement = state.announcements
+    .filter((item) => item.audience === "All" || item.audience === currentUser.yearLevel)
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || +new Date(b.publishedAt) - +new Date(a.publishedAt))[0];
 
   const getFirstName = (fullName: string): string => {
     if (!fullName) return "Student";

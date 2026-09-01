@@ -51,14 +51,14 @@ export async function getLeaderboard(
     return { data: null, error: error.message };
   }
 
-  const rawRows = (data as Array<{ user_id: string; name: string; year_level: string; total_points: number; rank: number }> | null) || [];
-  const mapped: LeaderboardItem[] = rawRows.map((row: any, index: number) => ({
-    id: row.id || row.user_id,
-    studentId: String(row.student_id || "").toUpperCase(),
+  const rawRows = (data as Array<{ user_id: string; name: string; year_level: string; total_points: number | string; rank: number | string }> | null) || [];
+  const mapped: LeaderboardItem[] = rawRows.map((row, index) => ({
+    id: row.user_id,
+    studentId: "",
     name: row.name || "Student",
     yearLevel: (row.year_level as YearLevel) || "Freshman",
-    points: Number(row.points || row.total_points || 0),
-    rank: Number(row.rank || index + 1),
+    points: Number(row.total_points ?? 0),
+    rank: Number(row.rank ?? index + 1),
   }));
 
   return { data: mapped, error: null };

@@ -1,10 +1,139 @@
+import { useEffect } from "react";
 import { BookOpen, CalendarDays, ClipboardCheck, GraduationCap, Users } from "lucide-react";
 import type { TabKey } from "../../../components/layout/Sidebar";
-import { getUserPoints, useAppData } from "../../../context/AppDataContext";
+import { useAppData } from "../../../context/AppDataContext";
 import { relativeTime } from "../../../utils/format";
 
 export function AdminDashboardPage({ onNavigate }: { onNavigate?: (tab: TabKey) => void }) {
-  const { state } = useAppData(); const students = state.users.filter((user) => user.role !== "admin" && user.active); const pendingNotes = state.notes.filter((note) => note.status === "Pending"); const pendingAttendance = state.attendance.filter((record) => record.status === "Pending"); const approved = state.attendance.filter((record) => record.status === "Approved").length; const attendanceRate = state.attendance.length ? Math.round((approved / state.attendance.length) * 100) : 0; const leaders = students.map((user) => ({ user, points: getUserPoints(state, user.id) })).sort((a, b) => b.points - a.points).slice(0, 4); const activity = [...state.notifications].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 5);
-  return <div className="h-full overflow-y-auto"><div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8"><header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><div className="section-kicker">Admin overview</div><h1 className="page-heading">Tutorial Clinic control center</h1><p className="page-description">Manage sessions, attendance, student records, notes, and subjects from one workspace.</p></div><div className="flex gap-2"><button className="secondary-button" onClick={() => onNavigate?.("admin-sessions")}>Manage sessions</button><button className="primary-button" onClick={() => onNavigate?.("admin-attendance")}>Review attendance</button></div></header><section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat icon={<Users />} label="Active students" value={students.length} /><Stat icon={<CalendarDays />} label="Sessions" value={state.events.length} /><Stat icon={<ClipboardCheck />} label="Attendance approval" value={`${attendanceRate}%`} detail={`${pendingAttendance.length} pending`} /><Stat icon={<BookOpen />} label="Notes awaiting review" value={pendingNotes.length} /></section><section className="mt-5 grid items-start gap-5 xl:grid-cols-[1fr_340px]"><div className="rounded-xl bg-white p-5 demo-card"><div className="flex items-center justify-between"><h2 className="text-lg font-bold">Leaderboard preview</h2><GraduationCap size={18} color="#F5A623" /></div><div className="mt-4 grid gap-2">{leaders.map((item, index) => <div key={item.user.id} className={`leader-preview ${index === 0 ? "is-first" : ""}`}><span>{index + 1}</span><div className="flex-1"><strong>{item.user.name}</strong><small>{item.user.yearLevel} - {item.user.studentId}</small></div><strong>{item.points} pts</strong></div>)}</div></div><div className="rounded-xl bg-white p-5 demo-card"><h2 className="text-lg font-bold">Recent system activity</h2><ul className="mt-4 grid gap-4">{activity.map((item) => <li key={item.id} className="flex gap-3"><span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#F5A623]" /><div><div className="text-sm font-bold">{item.title}</div><div className="text-xs text-[#6F6F6F]">{relativeTime(item.createdAt)}</div></div></li>)}</ul><div className="mt-5 grid grid-cols-2 gap-2"><button className="secondary-button" onClick={() => onNavigate?.("admin-notes")}>Review notes</button><button className="secondary-button" onClick={() => onNavigate?.("admin-students")}>Students</button><button className="secondary-button" onClick={() => onNavigate?.("announcements")}>Announcements</button></div></div></section></div></div>;
+  const { state, leaderboardItems, loadLeaderboard } = useAppData();
+
+  useEffect(() => {
+    void loadLeaderboard();
+  }, [loadLeaderboard]);
+
+  const students = state.users.filter((user) => user.role !== "admin" && user.active);
+  const pendingNotes = state.notes.filter((note) => note.status === "Pending");
+  const pendingAttendance = state.attendance.filter((record) => record.status === "Pending");
+  const approved = state.attendance.filter((record) => record.status === "Approved").length;
+  const attendanceRate = state.attendance.length ? Math.round((approved / state.attendance.length) * 100) : 0;
+  const leaders = leaderboardItems.slice(0, 4);
+  const activity = [...state.notifications]
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    .slice(0, 5);
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+        <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+          <div>
+            <div className="section-kicker">Admin overview</div>
+            <h1 className="page-heading">Tutorial Clinic control center</h1>
+            <p className="page-description">
+              Manage sessions, attendance, student records, notes, and subjects from one workspace.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button className="secondary-button" onClick={() => onNavigate?.("admin-sessions")}>
+              Manage sessions
+            </button>
+            <button className="primary-button" onClick={() => onNavigate?.("admin-attendance")}>
+              Review attendance
+            </button>
+          </div>
+        </header>
+
+        <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat icon={<Users />} label="Active students" value={students.length} />
+          <Stat icon={<CalendarDays />} label="Sessions" value={state.events.length} />
+          <Stat
+            icon={<ClipboardCheck />}
+            label="Attendance approval"
+            value={`${attendanceRate}%`}
+            detail={`${pendingAttendance.length} pending`}
+          />
+          <Stat
+            icon={<BookOpen />}
+            label="Notes awaiting review"
+            value={pendingNotes.length}
+          />
+        </section>
+
+        <section className="mt-5 grid items-start gap-5 xl:grid-cols-[1fr_340px]">
+          <div className="rounded-xl bg-white p-5 demo-card">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Leaderboard preview</h2>
+              <GraduationCap size={18} color="#F5A623" />
+            </div>
+            <div className="mt-4 grid gap-2">
+              {leaders.length > 0 ? (
+                leaders.map((item, index) => (
+                  <div key={item.id} className={`leader-preview ${index === 0 ? "is-first" : ""}`}>
+                    <span>{index + 1}</span>
+                    <div className="flex-1">
+                      <strong>{item.name}</strong>
+                      <small>{item.yearLevel}</small>
+                    </div>
+                    <strong>{item.points} pts</strong>
+                  </div>
+                ))
+              ) : (
+                <div className="py-4 text-center text-xs text-[#6F6F6F]">
+                  No student standings recorded yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-white p-5 demo-card">
+            <h2 className="text-lg font-bold">Recent system activity</h2>
+            <ul className="mt-4 grid gap-4">
+              {activity.map((item) => (
+                <li key={item.id} className="flex gap-3">
+                  <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#F5A623]" />
+                  <div>
+                    <div className="text-sm font-bold">{item.title}</div>
+                    <div className="text-xs text-[#6F6F6F]">{relativeTime(item.createdAt)}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button className="secondary-button" onClick={() => onNavigate?.("admin-notes")}>
+                Review notes
+              </button>
+              <button className="secondary-button" onClick={() => onNavigate?.("admin-students")}>
+                Students
+              </button>
+              <button className="secondary-button" onClick={() => onNavigate?.("announcements")}>
+                Announcements
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 }
-function Stat({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: React.ReactNode; detail?: string }) { return <div className="rounded-xl bg-white p-4 demo-card"><div className="flex items-center justify-between text-[#F5A623]"><span className="[&>svg]:h-[18px] [&>svg]:w-[18px]">{icon}</span><strong className="text-2xl text-[#1C1C1C]">{value}</strong></div><div className="mt-3 text-sm font-bold">{label}</div>{detail && <div className="text-xs text-[#6F6F6F]">{detail}</div>}</div>; }
+
+function Stat({
+  icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-xl bg-white p-4 demo-card">
+      <div className="flex items-center justify-between text-[#F5A623]">
+        <span className="[&>svg]:h-[18px] [&>svg]:w-[18px]">{icon}</span>
+        <strong className="text-2xl text-[#1C1C1C]">{value}</strong>
+      </div>
+      <div className="mt-3 text-sm font-bold">{label}</div>
+      {detail && <div className="text-xs text-[#6F6F6F]">{detail}</div>}
+    </div>
+  );
+}

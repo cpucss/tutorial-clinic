@@ -33,8 +33,12 @@ import {
 } from "../services/supabase/notesRepository";
 import {
   getPointHistory,
+  getLeaderboard,
   adjustPoints as adjustPointsInSupabase,
 } from "../services/supabase/pointsRepository";
+import type { LeaderboardItem } from "../services/supabase/pointsRepository";
+import { supabase } from "../services/supabase/client";
+import type { YearLevel } from "../types/common";
 import {
   getNotifications,
   markNotificationAsRead,
@@ -186,6 +190,12 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
         events: state.events.filter((e) => e.id !== action.eventId),
         rsvps: state.rsvps.filter((r) => r.eventId !== action.eventId),
         attendance: state.attendance.filter((a) => a.eventId !== action.eventId),
+        scheduleEventIds: Object.fromEntries(
+          Object.entries(state.scheduleEventIds).map(([uid, ids]) => [
+            uid,
+            ids.filter((id) => id !== action.eventId),
+          ])
+        ),
       };
     case "SET_EVENTS":
       return { ...state, events: action.events };
@@ -211,17 +221,7 @@ export function appDataReducer(state: DemoState, action: AppDataAction): DemoSta
             },
           ];
 
-      const currentSchedule = state.scheduleEventIds[action.userId] || [];
-      const scheduleEventIds = {
-        ...state.scheduleEventIds,
-        [action.userId]: exists
-          ? currentSchedule
-          : currentSchedule.includes(action.eventId)
-          ? currentSchedule
-          : [...currentSchedule, action.eventId],
-      };
-
-      return { ...state, rsvps, scheduleEventIds };
+      return { ...state, rsvps };
     }
     case "TOGGLE_SCHEDULE": {
       const current = state.scheduleEventIds[action.userId] || [];
@@ -539,6 +539,15 @@ export type AppDataContextValue = {
   adjustPoints: (userId: string, points: number, reason: string) => Promise<Result>;
   markAnnouncementRead: (announcementId: string) => Promise<Result>;
   updatePreferences: (preferences: Preferences) => Promise<Result>;
+  leaderboardItems: LeaderboardItem[];
+  leaderboardLoading: boolean;
+  leaderboardError: string | null;
+  leaderboardUpdatedAt: string | null;
+  loadLeaderboard: (yearLevel?: YearLevel) => Promise<void>;
+  refreshLeaderboard: (yearLevel?: YearLevel) => Promise<void>;
+  refreshSharedRecords: () => Promise<void>;
+  refreshUserRecords: () => Promise<void>;
+  refreshAllAuthorizedRecords: () => Promise<void>;
 };
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
@@ -696,6 +705,34 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return state.users.find((u) => u.id === state.currentUserId);
   }, [state.currentUserId, state.users]);
 
+  // Server-authoritative leaderboard state
+  const [leaderboardItems, setLeaderboardItems] = useState<LeaderboardItem[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState<boolean>(false);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+  const [leaderboardUpdatedAt, setLeaderboardUpdatedAt] = useState<string | null>(null);
+
+  const loadLeaderboard = useCallback(async (yearLevel?: YearLevel) => {
+    setLeaderboardLoading(true);
+    setLeaderboardError(null);
+    try {
+      const { data, error } = await getLeaderboard(yearLevel);
+      if (error) {
+        setLeaderboardError(error);
+      } else {
+        setLeaderboardItems(data || []);
+        setLeaderboardUpdatedAt(new Date().toISOString());
+      }
+    } catch {
+      setLeaderboardError("Failed to fetch leaderboard.");
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, []);
+
+  const refreshLeaderboard = useCallback(async (yearLevel?: YearLevel) => {
+    await loadLeaderboard(yearLevel);
+  }, [loadLeaderboard]);
+
   const loadSharedRecords = useCallback(async () => {
     try {
       const [subjectsResult, sessionsResult, approvedResult, announcementsResult] = await Promise.all([
@@ -720,6 +757,10 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentUser?.role]);
 
+  const refreshSharedRecords = useCallback(async () => {
+    await loadSharedRecords();
+  }, [loadSharedRecords]);
+
   const loadUserRecords = useCallback(async () => {
     if (!currentUser) return;
     const userId = currentUser.authUserId || currentUser.id;
@@ -738,7 +779,12 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
         ]);
 
       if (rsvpsRes.data) dispatch({ type: "SET_RSVPS", rsvps: rsvpsRes.data });
-      if (savedSessionsRes.data) dispatch({ type: "SET_SCHEDULE", userId: currentUser.id, eventIds: savedSessionsRes.data });
+      if (savedSessionsRes.data) {
+        dispatch({ type: "SET_SCHEDULE", userId: currentUser.id, eventIds: savedSessionsRes.data });
+        if (currentUser.authUserId && currentUser.authUserId !== currentUser.id) {
+          dispatch({ type: "SET_SCHEDULE", userId: currentUser.authUserId, eventIds: savedSessionsRes.data });
+        }
+      }
       if (preferencesRes.data) dispatch({ type: "UPDATE_PREFERENCES", userId: currentUser.id, preferences: preferencesRes.data });
       if (attRes.data) dispatch({ type: "SET_ATTENDANCE", attendance: attRes.data });
       if (myNotesRes.data) dispatch({ type: "RECONCILE_MY_NOTES", notes: myNotesRes.data, userIds: [currentUser.id, userId] });
@@ -752,9 +798,20 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentUser]);
 
+  const refreshUserRecords = useCallback(async () => {
+    await loadUserRecords();
+  }, [loadUserRecords]);
+
+  const refreshAllAuthorizedRecords = useCallback(async () => {
+    await Promise.all([loadUserRecords(), loadSharedRecords(), loadLeaderboard()]);
+  }, [loadLeaderboard, loadSharedRecords, loadUserRecords]);
+
   useEffect(() => {
-    if (currentUser) void loadSharedRecords();
-  }, [currentUser, loadSharedRecords]);
+    if (currentUser) {
+      void loadSharedRecords();
+      void loadLeaderboard();
+    }
+  }, [currentUser, loadLeaderboard, loadSharedRecords]);
 
   useEffect(() => {
     void loadUserRecords();
@@ -768,17 +825,42 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     return setupAutoSync(userId);
   }, [currentUser]);
 
+  // Realtime subscription for sessions updates
   useEffect(() => {
     if (!currentUser) return;
-    const refreshUser = () => {
-      if (navigator.onLine && document.visibilityState === "visible") void loadUserRecords();
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const handleSessionChange = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        void loadSharedRecords();
+      }, 300);
     };
+
+    const channel = supabase
+      .channel("public:sessions-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sessions" },
+        handleSessionChange
+      )
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [currentUser, loadSharedRecords]);
+
+  // Centralized background synchronization coordinator
+  useEffect(() => {
+    if (!currentUser) return;
     const refreshAll = () => {
       if (navigator.onLine && document.visibilityState === "visible") {
-        void Promise.all([loadUserRecords(), loadSharedRecords()]);
+        void Promise.all([loadUserRecords(), loadSharedRecords(), loadLeaderboard()]);
       }
     };
-    const intervalId = window.setInterval(refreshUser, 60000);
+    const intervalId = window.setInterval(refreshAll, 45000);
     window.addEventListener("online", refreshAll);
     window.addEventListener("focus", refreshAll);
     document.addEventListener("visibilitychange", refreshAll);
@@ -788,7 +870,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("focus", refreshAll);
       document.removeEventListener("visibilitychange", refreshAll);
     };
-  }, [currentUser, loadSharedRecords, loadUserRecords]);
+  }, [currentUser, loadLeaderboard, loadSharedRecords, loadUserRecords]);
 
   const currentPoints = useMemo(() => {
     if (!currentUser) return 0;
@@ -1039,22 +1121,31 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       if (!currentUser || currentUser.role === "admin") {
         return { ok: false, message: "Sign in as a student to manage a schedule." };
       }
-      const userId = currentUser.authUserId || currentUser.id;
-      const saved = (state.scheduleEventIds[currentUser.id] || []).includes(eventId);
+      const accountUserId = currentUser.authUserId || currentUser.id;
+      const saved =
+        (state.scheduleEventIds[currentUser.id] || []).includes(eventId) ||
+        (state.scheduleEventIds[accountUserId] || []).includes(eventId);
+
       dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.id, eventId });
+      if (currentUser.authUserId && currentUser.authUserId !== currentUser.id) {
+        dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.authUserId, eventId });
+      }
 
       try {
         const result = await setSavedSession(eventId, !saved);
         if (result.error) {
           if (!navigator.onLine || result.error.includes("Failed to fetch")) {
-            await queueMutation(userId, "schedule", eventId, "set", { sessionId: eventId, saved: !saved });
+            await queueMutation(accountUserId, "schedule", eventId, "set", { sessionId: eventId, saved: !saved });
             return { ok: true, message: "Your schedule change will be saved when you are back online." };
           }
           dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.id, eventId });
+          if (currentUser.authUserId && currentUser.authUserId !== currentUser.id) {
+            dispatch({ type: "TOGGLE_SCHEDULE", userId: currentUser.authUserId, eventId });
+          }
           return { ok: false, message: result.error };
         }
       } catch {
-        await queueMutation(userId, "schedule", eventId, "set", { sessionId: eventId, saved: !saved });
+        await queueMutation(accountUserId, "schedule", eventId, "set", { sessionId: eventId, saved: !saved });
         return { ok: true, message: "Your schedule change will be saved when you are back online." };
       }
       return { ok: true, message: saved ? "Removed from your schedule." : "Added to your schedule." };
@@ -1453,6 +1544,15 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       adjustPoints,
       markAnnouncementRead,
       updatePreferences,
+      leaderboardItems,
+      leaderboardLoading,
+      leaderboardError,
+      leaderboardUpdatedAt,
+      loadLeaderboard,
+      refreshLeaderboard,
+      refreshSharedRecords,
+      refreshUserRecords,
+      refreshAllAuthorizedRecords,
     }),
     [
       state,
@@ -1481,6 +1581,15 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
       adjustPoints,
       markAnnouncementRead,
       updatePreferences,
+      leaderboardItems,
+      leaderboardLoading,
+      leaderboardError,
+      leaderboardUpdatedAt,
+      loadLeaderboard,
+      refreshLeaderboard,
+      refreshSharedRecords,
+      refreshUserRecords,
+      refreshAllAuthorizedRecords,
     ]
   );
 
