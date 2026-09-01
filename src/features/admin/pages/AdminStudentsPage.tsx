@@ -37,7 +37,7 @@ export function AdminStudentsPage({ onNotify }: { onNotify?: (toast: Omit<ToastM
       students.map((user) => ({
         student_id: user.studentId,
         name: user.name,
-        year: user.yearLevel,
+        year: user.yearLevel ?? "Unassigned",
         section: user.section,
         email: user.email,
         role: user.role,
@@ -202,7 +202,7 @@ function Filter({ label, value, onChange, options }: { label: string; value: str
 function StudentEditor({ user, onClose, onNotify }: { user: DemoUser; onClose: () => void; onNotify?: (toast: Omit<ToastMessage, "id">) => void }) {
   const { saveUser } = useAppData();
   const [name, setName] = useState(user.name);
-  const [yearLevel, setYearLevel] = useState<YearLevel>(user.yearLevel);
+  const [yearLevel, setYearLevel] = useState<YearLevel | "None">(user.yearLevel ?? "None");
   const [section, setSection] = useState(user.section);
   const [program, setProgram] = useState(user.program);
   const [role, setRole] = useState<"student" | "contributor">(user.role === "contributor" ? "contributor" : "student");
@@ -217,7 +217,7 @@ function StudentEditor({ user, onClose, onNotify }: { user: DemoUser; onClose: (
     const result = await saveUser({
       ...user,
       name: name.trim(),
-      yearLevel,
+      yearLevel: yearLevel === "None" ? null : yearLevel,
       section: section.trim(),
       program: program.trim(),
       role,
@@ -252,9 +252,10 @@ function StudentEditor({ user, onClose, onNotify }: { user: DemoUser; onClose: (
           </label>
           <label className="form-field">
             <span>Year level</span>
-            <select value={yearLevel} onChange={(e) => setYearLevel(e.target.value as YearLevel)}>
+            <select value={yearLevel} onChange={(e) => setYearLevel(e.target.value as YearLevel | "None")}>
+              <option value="None">None (Unassigned)</option>
               {["Freshman", "Sophomore", "Junior", "Senior"].map((item) => (
-                <option key={item}>{item}</option>
+                <option key={item} value={item}>{item}</option>
               ))}
             </select>
           </label>

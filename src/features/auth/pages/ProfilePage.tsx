@@ -35,12 +35,7 @@ export function ProfilePage({ onNavigate }: { onNavigate?: (tab: TabKey) => void
             </div>
             <h1>{displayName}</h1>
             <p className="mt-1 text-sm text-[#6F6F6F]">
-              BS Computer Science - {
-                currentUser.yearLevel === "Freshman" ? "1" :
-                currentUser.yearLevel === "Sophomore" ? "2" :
-                currentUser.yearLevel === "Junior" ? "3" :
-                currentUser.yearLevel === "Senior" ? "4" : "Not set"
-              }
+              BS Computer Science • {currentUser.yearLevel ?? "Year level not assigned"}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <StatusBadge status={currentUser.role} />
@@ -65,7 +60,7 @@ export function ProfilePage({ onNavigate }: { onNavigate?: (tab: TabKey) => void
             <dl className="detail-list">
               <div><dt>Student ID</dt><dd>{currentUser.studentId}</dd></div>
               <div><dt>Program</dt><dd>BS Computer Science</dd></div>
-              <div><dt>Year Level</dt><dd>{currentUser.yearLevel ?? "Not set"}</dd></div>
+              <div><dt>Year Level</dt><dd>{currentUser.yearLevel ?? "Year level not assigned"}</dd></div>
             </dl>
           </div>
 

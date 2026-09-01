@@ -85,7 +85,7 @@ export function DashboardPage({
             <h1 className="page-heading mt-1">{getGreeting()}</h1>
             <dl className="mt-5 grid gap-3 sm:grid-cols-2">
               <Info label="Student ID" value={currentUser.studentId} />
-              <Info label="Year Level" value={currentUser.yearLevel ?? "Not set"} />
+              <Info label="Year Level" value={currentUser.yearLevel ?? "Year level not assigned"} />
             </dl>
           </div>
           <div className="motion-card rounded-xl p-5 text-white" style={{ background: "#1C1C1C" }}>

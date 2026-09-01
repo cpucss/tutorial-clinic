@@ -33,6 +33,7 @@ import type { DemoUser } from "../../types/app";
 export type TabKey =
   | "dashboard"
   | "events"
+  | "subjects"
   | "attendance-history"
   | "leaderboard"
   | "notes"
@@ -49,6 +50,7 @@ export type TabKey =
   | "admin-dashboard"
   | "admin-attendance"
   | "admin-sessions"
+  | "admin-subjects"
   | "admin-notes"
   | "admin-students";
 
@@ -88,6 +90,11 @@ const workspaceItems: NavItem[] = [
     key: "events",
     label: "Events",
     icon: <Calendar size={18} strokeWidth={1.75} />,
+  },
+  {
+    key: "subjects",
+    label: "BSCS Subjects",
+    icon: <NotebookTabs size={18} strokeWidth={1.75} />,
   },
   { key: "schedule", label: "My Schedule", icon: <CalendarDays size={18} strokeWidth={1.75} /> },
   {
@@ -141,6 +148,11 @@ const adminItems: NavItem[] = [
     key: "admin-sessions",
     label: "Admin Sessions",
     icon: <ListChecks size={18} strokeWidth={1.75} />,
+  },
+  {
+    key: "admin-subjects",
+    label: "Admin Subjects",
+    icon: <NotebookTabs size={18} strokeWidth={1.75} />,
   },
   {
     key: "admin-notes",

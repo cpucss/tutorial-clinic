@@ -11,7 +11,7 @@ export type AuthProfile = {
   studentId: string;
   name: string;
   role: UserRole;
-  yearLevel: YearLevel;
+  yearLevel: YearLevel | null;
   program: string;
   section: string;
   active: boolean;
@@ -114,7 +114,7 @@ export async function signInStudent(
       studentId: String(profileRow.student_id || "").toUpperCase(),
       name: profileRow.name || "Student",
       role: (profileRow.role as UserRole) || "student",
-      yearLevel: (profileRow.year_level as YearLevel) || "Freshman",
+      yearLevel: (profileRow.year_level as YearLevel) ?? null,
       program: profileRow.program || "BS Computer Science",
       section: profileRow.section || "A",
       active: profileRow.active,
@@ -150,7 +150,7 @@ export async function restoreAccount(): Promise<AuthAccount | null> {
       studentId: String(profileRow.student_id || "").toUpperCase(),
       name: profileRow.name || "Student",
       role: (profileRow.role as UserRole) || "student",
-      yearLevel: (profileRow.year_level as YearLevel) || "Freshman",
+      yearLevel: (profileRow.year_level as YearLevel) ?? null,
       program: profileRow.program || "BS Computer Science",
       section: profileRow.section || "A",
       active: true,

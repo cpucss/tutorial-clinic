@@ -9,12 +9,13 @@ export type DemoAccountSetup = {
   mustChangePassword?: boolean;
   promptDismissedAt?: string;
 };
+
 export type DemoUser = {
   id: string;
   authUserId?: string;
   name: string;
   studentId: string;
-  yearLevel: YearLevel;
+  yearLevel?: YearLevel | null;
   email: string;
   program: string;
   section: string;
@@ -23,11 +24,21 @@ export type DemoUser = {
   accountSetup: DemoAccountSetup;
 };
 
+export type SemesterTerm = "1st Semester" | "2nd Semester" | "Summer";
+
 export type Subject = {
   id: string;
   code: string;
   name: string;
-  yearLevel: YearLevel;
+  yearLevel?: YearLevel | null;
+  semester?: SemesterTerm | null;
+  lecHours?: number;
+  labHours?: number;
+  creditUnits?: number;
+  prerequisites?: string[];
+  isElective?: boolean;
+  specialization?: string | null;
+  curriculumVersion?: string;
   coordinator: string;
   active: boolean;
 };

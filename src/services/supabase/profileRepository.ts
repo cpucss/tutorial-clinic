@@ -10,7 +10,7 @@ export type ProfileRecord = {
   studentId: string;
   name: string;
   role: UserRole;
-  yearLevel: YearLevel;
+  yearLevel: YearLevel | null;
   program: string;
   section: string;
   active: boolean;
@@ -21,8 +21,8 @@ export type ProfileRecord = {
 
 const yearLevels: YearLevel[] = ["Freshman", "Sophomore", "Junior", "Senior"];
 
-function asYearLevel(value: unknown): YearLevel {
-  return yearLevels.find((year) => year.toLowerCase() === String(value ?? "").toLowerCase()) ?? "Freshman";
+function asYearLevel(value: unknown): YearLevel | null {
+  return yearLevels.find((year) => year.toLowerCase() === String(value ?? "").toLowerCase()) ?? null;
 }
 
 function mapProfileRow(row: ProfileRow): ProfileRecord {
