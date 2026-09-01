@@ -12,13 +12,14 @@ function mapNotificationRow(row: any): DemoNotification {
     createdAt: row.created_at,
     readAt: row.read_at || undefined,
     relatedTab: row.related_tab || undefined,
+    relatedId: row.related_id || undefined,
   };
 }
 
 export async function getNotifications(userId: string): Promise<{ data: DemoNotification[] | null; error: any }> {
   const { data, error } = await supabase
     .from("notifications")
-    .select("id, user_id, title, message, type, read_at, related_tab, created_at")
+    .select("id, user_id, title, message, type, read_at, related_tab, related_id, created_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 

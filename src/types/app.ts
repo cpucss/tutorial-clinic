@@ -128,6 +128,7 @@ export type DemoNotification = {
   createdAt: string;
   readAt?: string;
   relatedTab?: string;
+  relatedId?: string;
 };
 
 export type Announcement = {
