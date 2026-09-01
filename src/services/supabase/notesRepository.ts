@@ -471,24 +471,50 @@ export async function deleteNote(
     };
   }
 
-  const { data, error } = await supabase.rpc("delete_my_note", {
+  // Phase 1: Retrieve deletable storage paths for this note
+  const { data: paths, error: pathsError } = await supabase.rpc("get_deletable_note_paths", {
     p_note_id: noteId,
   });
 
-  if (error) {
+  if (pathsError) {
     return {
       ok: false,
-      error: parseWorkflowError("saving_draft", error),
+      error: parseWorkflowError("saving_draft", pathsError),
     };
   }
 
-  const res = data as { success?: boolean; storage_paths?: string[] };
-  if (res?.storage_paths && res.storage_paths.length > 0) {
-    try {
-      await supabase.storage.from(TUTORIAL_NOTES_BUCKET).remove(res.storage_paths);
-    } catch (e) {
-      console.warn("Could not delete some note storage objects:", e);
+  // Phase 2: Remove storage objects while note is still in Draft/Rejected status
+  const storagePaths = (paths as string[]) || [];
+  if (storagePaths.length > 0) {
+    const { error: storageError } = await supabase.storage
+      .from(TUTORIAL_NOTES_BUCKET)
+      .remove(storagePaths);
+
+    if (storageError) {
+      return {
+        ok: false,
+        error: {
+          code: "STORAGE_UPLOAD_FAILED",
+          stage: "saving_draft",
+          message: storageError.message,
+          userFacingTitle: "Could not delete note attachment",
+          userFacingDescription:
+            "We couldn’t completely delete this note. Please try again. Your note has not been reported as deleted.",
+        },
+      };
     }
+  }
+
+  // Phase 3: Finalize database deletion
+  const { error: deleteError } = await supabase.rpc("delete_my_note", {
+    p_note_id: noteId,
+  });
+
+  if (deleteError) {
+    return {
+      ok: false,
+      error: parseWorkflowError("saving_draft", deleteError),
+    };
   }
 
   return { ok: true, error: null };

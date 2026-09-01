@@ -147,7 +147,7 @@ export function MyNotesPage({ onNotify }: { onNotify?: (toast: Omit<ToastMessage
             onNotify?.({
               tone: "warning",
               title: "Note deleted",
-              description: "The note and its attachment were removed.",
+              description: "Your draft and its attachment were deleted.",
             });
             setDeletingNote(null);
           } else {
@@ -490,7 +490,7 @@ export function NoteEditor({
             onNotify?.({
               tone: "warning",
               title: "Note deleted",
-              description: "The draft was permanently removed.",
+              description: "Your draft and its attachment were deleted.",
             });
             setShowDeleteConfirm(false);
             onClose();

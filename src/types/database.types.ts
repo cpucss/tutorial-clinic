@@ -670,6 +670,12 @@ export type Database = {
         };
         Returns: Database["public"]["Tables"]["notes"]["Row"];
       };
+      get_deletable_note_paths: {
+        Args: {
+          p_note_id: string;
+        };
+        Returns: string[];
+      };
       delete_my_note: {
         Args: {
           p_note_id: string;
@@ -677,7 +683,6 @@ export type Database = {
         Returns: {
           success: boolean;
           note_id: string;
-          storage_paths: string[];
         };
       };
     };
