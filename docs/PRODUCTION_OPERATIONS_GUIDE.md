@@ -78,9 +78,14 @@ npx vercel promote dpl_HsPYavLwUvZbHSQw3Aw1Fd5R7F74 --yes
 2. **Data API & Explicit Grants**:
    - All client RPCs (`issue_attendance_qr`, `record_attendance_from_qr`, `defer_password_change`, `complete_password_change`, `set_rsvp`, `update_my_profile`, `adjust_points`, `moderate_note`, `moderate_attendance`, `get_leaderboard`) have explicit `GRANT EXECUTE TO authenticated` and revoked execution from `public, anon`.
    - Security-definer functions enforce `SET search_path = ''` and internal caller verification via `(select auth.uid())`.
-3. **Automated Quality Verification Commands**:
-   - `npm run typecheck`: TypeScript strict compilation.
-   - `npm test`: 29 Vitest core and security tests.
-   - `npm run test:mobile`: 60 mobile/tablet viewport layout checks.
+3. **Realtime & Cross-Device Synchronization Architecture**:
+   - `public.sessions` is published via `supabase_realtime` publication for instant cross-device updates when sessions are created, updated, or deleted.
+   - Centralized background synchronization coordinator refreshes shared records, user-partitioned data, and server-authoritative leaderboard on a 45-second visible-tab interval, window focus, online reconnect, and tab visibility changes.
+   - Leaderboard standings are server-authoritative via `get_leaderboard` RPC with student profile privacy preserved (student IDs omitted from public leaderboard payload).
+
+4. **Automated Quality Verification Commands**:
+   - `npm run typecheck`: TypeScript strict compilation (0 errors).
+   - `npm test`: 35 Vitest core, security, offline persistence, and synchronization tests.
+   - `npm run test:mobile`: 60 mobile/tablet viewport layout checks (0 overflow).
    - `npm run db:lint`: Database schema typing and linting.
-   - `npm run db:advisors`: Security and performance database audit.
+   - `npm run build`: Production bundle and PWA service worker build.
